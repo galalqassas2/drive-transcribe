@@ -1,18 +1,16 @@
 import {
   ArrowLeft,
-  Captions,
   Check,
   CircleAlert,
   Copy,
   Download,
-  FileText,
-  Files,
   FolderOpen,
   RotateCw,
   X,
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { ExplorerFile, ViewerState } from '../types'
+import { TranscriptFileIcon } from './TranscriptFileIcon'
 
 interface FileViewerProps {
   selectedFile: ExplorerFile | null
@@ -20,12 +18,6 @@ interface FileViewerProps {
   viewerState: ViewerState
   onRetry: () => void
   onClose: () => void
-}
-
-function ViewerFileIcon({ type }: Pick<ExplorerFile, 'type'>) {
-  if (type === 'srt') return <Captions aria-hidden="true" />
-  if (type === 'combined') return <Files aria-hidden="true" />
-  return <FileText aria-hidden="true" />
 }
 
 function viewerType(type: ExplorerFile['type']) {
@@ -98,7 +90,7 @@ export function FileViewer({
         {selectedFile ? (
           <div className="viewer-prompt">
             <span className="viewer-prompt__icon" aria-hidden="true">
-              <ViewerFileIcon type={selectedFile.type} />
+              <TranscriptFileIcon type={selectedFile.type} />
             </span>
             <p className="viewer-prompt__type">{viewerType(selectedFile.type)}</p>
             <h2>{selectedFile.name}</h2>
@@ -144,7 +136,7 @@ export function FileViewer({
         </button>
 
         <span className="viewer-header__icon" data-type={openedFile.type} aria-hidden="true">
-          <ViewerFileIcon type={openedFile.type} />
+          <TranscriptFileIcon type={openedFile.type} />
         </span>
         <div className="viewer-header__title">
           <h2 title={openedFile.name}>{openedFile.name}</h2>

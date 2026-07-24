@@ -2,7 +2,7 @@ export function DriveProcessingIcon() {
   return (
     <svg
       className="processing-heading__animation"
-      viewBox="0 0 1080 1080"
+      viewBox="140 140 800 800"
       focusable="false"
     >
       <g transform="translate(540 540)">

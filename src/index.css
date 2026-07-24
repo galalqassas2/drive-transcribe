@@ -112,17 +112,12 @@ input:focus-visible {
   height: 36px;
   flex: 0 0 auto;
   place-items: center;
-  border: 1px solid rgb(21 88 189 / 15%);
-  border-radius: 11px;
-  color: #ffffff;
-  background: var(--accent);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 26%), 0 4px 12px rgb(29 103 214 / 18%);
 }
 
-.brand__mark svg {
-  width: 19px;
-  height: 19px;
-  stroke-width: 2;
+.brand__mark img {
+  display: block;
+  width: 28px;
+  height: 28px;
 }
 
 .brand__name {
@@ -394,11 +389,11 @@ input:focus-visible {
 
 .processing-heading__icon {
   display: grid;
-  width: 45px;
-  height: 45px;
+  width: 48px;
+  height: 48px;
   place-items: center;
   border: 1px solid #dbe8fa;
-  border-radius: 14px;
+  border-radius: 15px;
   color: var(--accent);
   background: var(--accent-soft);
 }
@@ -417,11 +412,11 @@ input:focus-visible {
 
 .processing-heading__animation {
   display: block;
-  width: 34px;
-  height: 34px;
+  width: 38px;
+  height: 38px;
   transform-box: fill-box;
   transform-origin: center;
-  animation: drive-processing 1335ms both;
+  animation: drive-processing 3s infinite;
   pointer-events: none;
 }
 
@@ -956,10 +951,16 @@ input:focus-visible {
   background: #f5f8ff;
 }
 
-.file-row__icon svg {
-  width: 17px;
-  height: 17px;
-  stroke-width: 1.9;
+.transcript-file-icon {
+  display: block;
+  object-fit: contain;
+  pointer-events: none;
+  user-select: none;
+}
+
+.file-row__icon .transcript-file-icon {
+  width: 22px;
+  height: 22px;
 }
 
 .file-row__details {
@@ -1151,6 +1152,11 @@ input:focus-visible {
   stroke-width: 1.6;
 }
 
+.viewer-prompt__icon .transcript-file-icon {
+  width: 34px;
+  height: 34px;
+}
+
 .viewer-prompt__type {
   margin: 0 0 6px !important;
   color: var(--accent) !important;
@@ -1230,10 +1236,9 @@ input:focus-visible {
   background: #f3f7ff;
 }
 
-.viewer-header__icon svg {
-  width: 17px;
-  height: 17px;
-  stroke-width: 1.9;
+.viewer-header__icon .transcript-file-icon {
+  width: 23px;
+  height: 23px;
 }
 
 .viewer-header__title {
@@ -1754,13 +1759,13 @@ input:focus-visible {
   }
 
   .processing-heading__icon {
-    width: 41px;
-    height: 41px;
+    width: 44px;
+    height: 44px;
   }
 
   .processing-heading__animation {
-    width: 31px;
-    height: 31px;
+    width: 35px;
+    height: 35px;
   }
 
   .processing-heading h1 {
