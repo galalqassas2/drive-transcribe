@@ -1,14 +1,12 @@
 import {
-  Captions,
   Check,
   CircleX,
-  FileText,
-  Files,
   Folder,
   RotateCw,
 } from 'lucide-react'
 import { useRef, type KeyboardEvent } from 'react'
 import type { ExplorerFile } from '../types'
+import { TranscriptFileIcon } from './TranscriptFileIcon'
 
 interface FileExplorerProps {
   files: ExplorerFile[]
@@ -18,12 +16,6 @@ interface FileExplorerProps {
   onSelect: (file: ExplorerFile) => void
   onOpen: (file: ExplorerFile) => void
   onRetry: () => void
-}
-
-function FileIcon({ type }: Pick<ExplorerFile, 'type'>) {
-  if (type === 'srt') return <Captions aria-hidden="true" />
-  if (type === 'combined') return <Files aria-hidden="true" />
-  return <FileText aria-hidden="true" />
 }
 
 function typeLabel(type: ExplorerFile['type']) {
@@ -142,7 +134,7 @@ export function FileExplorer({
                     tabIndex={isSelected || (!selectedKey && index === 0) ? 0 : -1}
                   >
                     <span className="file-row__icon" data-type={file.type} aria-hidden="true">
-                      <FileIcon type={file.type} />
+                      <TranscriptFileIcon type={file.type} />
                     </span>
                     <span className="file-row__details">
                       <strong title={file.name}>{file.name}</strong>
