@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import {
   AudioLines,
   CircleAlert,
@@ -7,6 +8,7 @@ import {
 } from 'lucide-react'
 import type { BackendStatusResponse } from '../types'
 import { Brand } from './Brand'
+import { DriveProcessingIcon } from './DriveProcessingIcon'
 
 interface ProcessingViewProps {
   status: BackendStatusResponse
@@ -29,6 +31,24 @@ const statusCopy = {
   failed: 'Transcription stopped',
 } as const
 
+function usePrefersReducedMotion() {
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(
+    () =>
+      typeof window !== 'undefined' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+  )
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const updatePreference = () => setPrefersReducedMotion(mediaQuery.matches)
+
+    mediaQuery.addEventListener('change', updatePreference)
+    return () => mediaQuery.removeEventListener('change', updatePreference)
+  }, [])
+
+  return prefersReducedMotion
+}
+
 export function ProcessingView({
   status,
   pollError,
@@ -39,6 +59,7 @@ export function ProcessingView({
   onRetryJob,
   onChangeFolder,
 }: ProcessingViewProps) {
+  const prefersReducedMotion = usePrefersReducedMotion()
   const progress = Math.min(100, Math.max(0, status.progress))
   const title = isLoadingFiles ? 'Preparing your files' : statusCopy[status.status]
   const readyCount = status.files.filter((file) => file.status === 'completed').length
@@ -51,8 +72,18 @@ export function ProcessingView({
 
       <section className="processing-stage" aria-labelledby="processing-title">
         <div className="processing-heading">
-          <span className="processing-heading__icon" aria-hidden="true">
-            {isFailed ? <CircleAlert /> : <AudioLines />}
+          <span
+            className="processing-heading__icon"
+            data-state={isFailed ? 'failed' : 'active'}
+            aria-hidden="true"
+          >
+            {isFailed ? (
+              <CircleAlert />
+            ) : prefersReducedMotion || pollError ? (
+              <AudioLines />
+            ) : (
+              <DriveProcessingIcon key={status.status} />
+            )}
           </span>
           <div>
             <h1 id="processing-title">{isFailed ? 'Transcription stopped' : 'Working on it'}</h1>
@@ -93,7 +124,7 @@ export function ProcessingView({
               <FileVideo />
             </span>
             <div>
-              <span>current file</span>
+              <span className="current-file__label">Current file</span>
               <strong>{status.current ?? (isLoadingFiles ? 'building file list' : 'getting ready')}</strong>
             </div>
           </div>

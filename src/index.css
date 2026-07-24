@@ -199,6 +199,7 @@ input:focus-visible {
   display: flex;
   height: 58px;
   min-width: 0;
+  overflow: hidden;
   align-items: center;
   gap: 12px;
   border: 1px solid var(--line-strong);
@@ -236,12 +237,27 @@ input:focus-visible {
   min-width: 0;
   padding: 0 18px 0 0;
   border: 0;
+  border-radius: 0 calc(var(--radius-control) - 1px) calc(var(--radius-control) - 1px) 0;
   outline: 0;
   color: var(--ink);
   background: transparent;
   font-size: 15px;
   font-weight: 490;
   letter-spacing: -0.01em;
+}
+
+.input-shell input:-webkit-autofill,
+.input-shell input:-webkit-autofill:hover,
+.input-shell input:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--ink);
+  caret-color: var(--ink);
+  -webkit-box-shadow: 0 0 0 1000px var(--surface) inset;
+  box-shadow: 0 0 0 1000px var(--surface) inset;
+}
+
+.input-shell input:autofill {
+  color: var(--ink);
+  background: var(--surface);
 }
 
 .input-shell input::placeholder {
@@ -387,10 +403,51 @@ input:focus-visible {
   background: var(--accent-soft);
 }
 
-.processing-heading__icon svg {
+.processing-heading__icon > svg:not(.processing-heading__animation) {
   width: 22px;
   height: 22px;
   stroke-width: 1.9;
+}
+
+.processing-heading__icon[data-state='failed'] {
+  border-color: #f0d2cf;
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.processing-heading__animation {
+  display: block;
+  width: 34px;
+  height: 34px;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: drive-processing 1335ms both;
+  pointer-events: none;
+}
+
+@keyframes drive-processing {
+  0% {
+    transform: rotate(0deg) scale(1);
+    animation-timing-function: cubic-bezier(0.2, 0.8, 0.3, 1);
+  }
+
+  30% {
+    transform: rotate(0deg) scale(1.065);
+    animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1);
+  }
+
+  50% {
+    transform: rotate(180deg) scale(1.109);
+  }
+
+  70% {
+    transform: rotate(360deg) scale(1.065);
+    animation-timing-function: cubic-bezier(0.2, 0.8, 0.3, 1);
+  }
+
+  100% {
+    transform: rotate(360deg) scale(1);
+  }
 }
 
 .processing-heading h1 {
@@ -507,14 +564,13 @@ input:focus-visible {
   min-width: 0;
 }
 
-.current-file span {
+.current-file__label {
   display: block;
   margin-bottom: 3px;
   color: var(--muted);
-  font-size: 10px;
-  font-weight: 720;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
 }
 
 .current-file strong {
@@ -1700,6 +1756,11 @@ input:focus-visible {
   .processing-heading__icon {
     width: 41px;
     height: 41px;
+  }
+
+  .processing-heading__animation {
+    width: 31px;
+    height: 31px;
   }
 
   .processing-heading h1 {
