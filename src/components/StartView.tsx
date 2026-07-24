@@ -108,7 +108,7 @@ export function StartView({
             <div className="inline-error" role="alert">
               <CircleAlert aria-hidden="true" />
               <div>
-                <strong>Transcription did not start</strong>
+                <strong>Server is not running</strong>
                 <p>{submitError}</p>
               </div>
             </div>

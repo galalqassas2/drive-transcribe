@@ -58,8 +58,8 @@ function createExplorerFiles(files: BackendFile[]): ExplorerFile[] {
 
 function startErrorMessage(error: unknown) {
   if (error instanceof ApiError) {
-    if (error.kind === 'configuration') {
-      return 'The transcription service is not connected. Contact the site owner.'
+    if (error.kind === 'configuration' || error.kind === 'network') {
+      return 'The backend server is not running. Please start the server and try again.'
     }
     if (error.status === 409) {
       return 'The service is already processing another folder. Try again when it finishes.'
@@ -69,7 +69,7 @@ function startErrorMessage(error: unknown) {
     }
   }
 
-  return 'Could not start transcription. Check your connection and try again.'
+  return 'The backend server is not running. Please start the server and try again.'
 }
 
 export function useTranscriptionJob(onNewJob: () => void) {

@@ -82,7 +82,7 @@ export function ProcessingView({
             ) : prefersReducedMotion || pollError ? (
               <AudioLines />
             ) : (
-              <DriveProcessingIcon key={status.status} />
+              <DriveProcessingIcon />
             )}
           </span>
           <div>
@@ -128,10 +128,6 @@ export function ProcessingView({
               <strong>{status.current ?? (isLoadingFiles ? 'building file list' : 'getting ready')}</strong>
             </div>
           </div>
-
-          {!pollError && !isFailed && (
-            <p className="poll-note">Progress refreshes every 3 seconds.</p>
-          )}
 
           {pollError && (
             <div className="status-error" role="alert">
