@@ -117,6 +117,16 @@ function validateFileId(value: string | null) {
   return value
 }
 
+function validateCombinedFormat(value: string | null) {
+  const format = value ?? 'txt'
+
+  if (format !== 'txt' && format !== 'srt') {
+    throw new RequestError(422, 'format must be txt or srt')
+  }
+
+  return format
+}
+
 function validateDriveUrl(value: unknown) {
   if (typeof value !== 'string') {
     throw new RequestError(422, 'A Google Drive folder link is required')
@@ -213,13 +223,19 @@ async function createUpstreamRequest(
       }
     }
     case 'combined': {
-      assertAllowedParameters(params, ['job_id'])
+      assertAllowedParameters(params, ['job_id', 'format'])
       const value = readParameter(params, 'job_id', false)
-      const query = value ? `?job_id=${encodeURIComponent(validateJobId(value))}` : ''
+      const format = validateCombinedFormat(readParameter(params, 'format', false))
+      const query = new URLSearchParams({ format })
+      if (value) query.set('job_id', validateJobId(value))
+
       return {
         method: 'GET',
-        path: `/combined${query}`,
-        accept: 'text/plain, application/octet-stream',
+        path: `/combined?${query.toString()}`,
+        accept:
+          format === 'srt'
+            ? 'application/x-subrip, text/plain;q=0.9'
+            : 'text/plain, application/octet-stream',
       }
     }
   }
