@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ApiError, getFiles, getStatus, startProcess } from '../api'
+import {
+  ApiError,
+  getJob,
+  getStatus,
+  listFiles,
+  startJob,
+} from '../lib/transcriberApi'
+import { fileErrorMessage } from '../lib/transcriptionMessages'
 import type {
   BackendFile,
   BackendStatusResponse,
@@ -7,12 +14,34 @@ import type {
   JobPhase,
 } from '../types'
 
+const pollInterval = 2500
+
 const initialStatus: BackendStatusResponse = {
   status: 'idle',
+  phase: 'idle',
   progress: 0,
-  current: null,
+  current_file: null,
   error: null,
   files: [],
+}
+
+function isAbortError(error: unknown) {
+  return error instanceof DOMException && error.name === 'AbortError'
+}
+
+function hasJobId(status: BackendStatusResponse): status is BackendStatusResponse & {
+  job_id: string
+} {
+  return 'job_id' in status && typeof status.job_id === 'string'
+}
+
+function isTerminal(status: BackendStatusResponse['status']) {
+  return (
+    status === 'completed' ||
+    status === 'failed' ||
+    status === 'cancelled' ||
+    status === 'abandoned'
+  )
 }
 
 function fileStem(name: string) {
@@ -20,10 +49,19 @@ function fileStem(name: string) {
   return lastDot > 0 ? name.slice(0, lastDot) : name
 }
 
-function createExplorerFiles(files: BackendFile[]): ExplorerFile[] {
+function fileError(file: BackendFile) {
+  return fileErrorMessage(file.error)
+}
+
+function createExplorerFiles(
+  files: BackendFile[],
+  jobStatus: BackendStatusResponse['status'],
+): ExplorerFile[] {
   const rows = files.flatMap<ExplorerFile>((file) => {
     const stem = fileStem(file.name)
-    const status = file.status === 'completed' ? 'ready' : 'failed'
+    const isReady = file.status === 'completed'
+    const status = isReady ? 'ready' : 'failed'
+    const error = isReady ? undefined : fileError(file)
 
     return [
       {
@@ -32,6 +70,7 @@ function createExplorerFiles(files: BackendFile[]): ExplorerFile[] {
         name: `${stem}.srt`,
         type: 'srt',
         status,
+        error,
       },
       {
         key: `${file.id}:txt`,
@@ -39,11 +78,12 @@ function createExplorerFiles(files: BackendFile[]): ExplorerFile[] {
         name: `${stem}.txt`,
         type: 'txt',
         status,
+        error,
       },
     ]
   })
 
-  if (files.some((file) => file.status === 'completed')) {
+  if (jobStatus === 'completed' && files.some((file) => file.status === 'completed')) {
     rows.push({
       key: 'combined',
       backendId: null,
@@ -56,25 +96,50 @@ function createExplorerFiles(files: BackendFile[]): ExplorerFile[] {
   return rows
 }
 
-function startErrorMessage(error: unknown) {
+function apiErrorMessage(error: unknown, context: 'start' | 'poll' | 'files') {
   if (error instanceof ApiError) {
-    if (error.kind === 'configuration' || error.kind === 'network') {
-      return 'The backend server is not running. Please start the server and try again.'
+    if (error.status === 401) {
+      return 'The app cannot authenticate with the transcription service. Check the Vercel settings.'
+    }
+    if (error.status === 404) {
+      return context === 'files'
+        ? 'The transcript outputs were not found.'
+        : 'This transcription job was not found.'
     }
     if (error.status === 409) {
-      return 'The service is already processing another folder. Try again when it finishes.'
+      return context === 'start'
+        ? 'Another folder is already being processed.'
+        : 'The requested result is not ready yet.'
     }
     if (error.status === 422) {
-      return 'The folder link could not be read. Check the link and try again.'
+      return 'Enter a valid public Google Drive folder link.'
+    }
+    if (error.status === 507) {
+      return 'The transcription server needs more free disk space before it can start.'
+    }
+    if (error.kind === 'timeout') {
+      return context === 'start'
+        ? 'The start request timed out. The app checked for an active job before allowing another try.'
+        : 'The request took too long. Check your connection, then retry.'
+    }
+    if (error.kind === 'network') {
+      return 'The transcription service could not be reached. Check your connection, then retry.'
     }
   }
 
-  return 'The backend server is not running. Please start the server and try again.'
+  if (context === 'files') {
+    return 'The transcripts are ready, but the file list did not load.'
+  }
+  if (context === 'poll') {
+    return 'Could not refresh progress. Check your connection, then retry.'
+  }
+  return 'The transcription could not start. Check the link, then try again.'
 }
 
 export function useTranscriptionJob(onNewJob: () => void) {
   const [phase, setPhase] = useState<JobPhase>('initial')
   const [status, setStatus] = useState<BackendStatusResponse>(initialStatus)
+  const [jobId, setJobId] = useState<string | null>(null)
   const [files, setFiles] = useState<ExplorerFile[]>([])
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isLoadingFiles, setIsLoadingFiles] = useState(false)
@@ -82,11 +147,19 @@ export function useTranscriptionJob(onNewJob: () => void) {
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [pollError, setPollError] = useState<string | null>(null)
   const [filesError, setFilesError] = useState<string | null>(null)
+  const [recoveryNotice, setRecoveryNotice] = useState<string | null>(null)
   const [pollRun, setPollRun] = useState(0)
   const [lastUrl, setLastUrl] = useState('')
   const submitLock = useRef(false)
   const submitController = useRef<AbortController | null>(null)
   const filesController = useRef<AbortController | null>(null)
+  const statusRef = useRef<BackendStatusResponse>(initialStatus)
+  const jobIdRef = useRef<string | null>(null)
+
+  const updateStatus = useCallback((nextStatus: BackendStatusResponse) => {
+    statusRef.current = nextStatus
+    setStatus(nextStatus)
+  }, [])
 
   const loadFiles = useCallback(async () => {
     filesController.current?.abort()
@@ -96,12 +169,26 @@ export function useTranscriptionJob(onNewJob: () => void) {
     setFilesError(null)
 
     try {
-      const response = await getFiles(controller.signal)
-      setFiles(createExplorerFiles(response.files))
+      const response = await listFiles(controller.signal)
+      if (
+        'job_id' in response &&
+        response.job_id &&
+        jobIdRef.current &&
+        response.job_id !== jobIdRef.current
+      ) {
+        throw new ApiError('The file list belongs to a different job')
+      }
+
+      const merged = new Map(response.files.map((file) => [file.id, file]))
+      for (const file of statusRef.current.files) {
+        if (!merged.has(file.id)) merged.set(file.id, file)
+      }
+
+      setFiles(createExplorerFiles([...merged.values()], statusRef.current.status))
     } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') return
+      if (isAbortError(error)) return
       setFiles([])
-      setFilesError('The transcripts are ready, but the file list did not load.')
+      setFilesError(apiErrorMessage(error, 'files'))
     } finally {
       if (!controller.signal.aborted) {
         setIsLoadingFiles(false)
@@ -111,50 +198,48 @@ export function useTranscriptionJob(onNewJob: () => void) {
   }, [])
 
   useEffect(() => {
-    if (phase !== 'processing' || !isPolling) return
+    if (phase !== 'processing' || !isPolling || !jobId) return
 
     let active = true
     let timer: number | undefined
-    let statusController: AbortController | null = null
+    let pollController: AbortController | null = null
 
     const poll = async () => {
-      statusController = new AbortController()
+      pollController = new AbortController()
 
       try {
-        const response = await getStatus(statusController.signal)
+        const response = await getJob(jobId, pollController.signal)
         if (!active) return
 
-        setStatus(response)
+        updateStatus(response)
         setPollError(null)
 
-        if (response.status === 'ready') {
+        if (isTerminal(response.status)) {
           setIsPolling(false)
-          await loadFiles()
+          if (response.status === 'completed') {
+            await loadFiles()
+          } else {
+            setPhase('failed')
+          }
           return
         }
 
-        if (response.status === 'failed') {
-          setIsPolling(false)
-          setPhase('failed')
-          return
-        }
-
-        timer = window.setTimeout(poll, 3000)
+        timer = window.setTimeout(poll, pollInterval)
       } catch (error) {
-        if (!active || (error instanceof DOMException && error.name === 'AbortError')) return
+        if (!active || isAbortError(error)) return
         setIsPolling(false)
-        setPollError('Could not refresh progress. Check your connection, then retry.')
+        setPollError(apiErrorMessage(error, 'poll'))
       }
     }
 
-    timer = window.setTimeout(poll, 3000)
+    void poll()
 
     return () => {
       active = false
       if (timer !== undefined) window.clearTimeout(timer)
-      statusController?.abort()
+      pollController?.abort()
     }
-  }, [isPolling, loadFiles, phase, pollRun])
+  }, [isPolling, jobId, loadFiles, phase, pollRun, updateStatus])
 
   useEffect(
     () => () => {
@@ -176,29 +261,81 @@ export function useTranscriptionJob(onNewJob: () => void) {
       setSubmitError(null)
       setPollError(null)
       setFilesError(null)
+      setRecoveryNotice(null)
       setFiles([])
       setLastUrl(driveUrl)
       onNewJob()
 
       try {
-        await startProcess(driveUrl, controller.signal)
-        setStatus(initialStatus)
+        const response = await startJob(driveUrl, controller.signal)
+        const now = Date.now() / 1000
+        const startedStatus: BackendStatusResponse = {
+          job_id: response.job_id,
+          folder_url: driveUrl,
+          status: 'active',
+          phase: 'queued',
+          progress: 0,
+          current_file: null,
+          error: null,
+          cancel_requested: false,
+          created_at: now,
+          updated_at: now,
+          started_at: null,
+          finished_at: null,
+          files: [],
+        }
+
+        jobIdRef.current = response.job_id
+        setJobId(response.job_id)
+        updateStatus(startedStatus)
         setPhase('processing')
         setIsPolling(true)
         setPollRun((run) => run + 1)
       } catch (error) {
-        if (!(error instanceof DOMException && error.name === 'AbortError')) {
-          setSubmitError(startErrorMessage(error))
-          setPhase('initial')
+        if (isAbortError(error)) return
+
+        const shouldRecover =
+          error instanceof ApiError &&
+          (error.status === 409 || error.kind === 'timeout')
+
+        if (shouldRecover) {
+          try {
+            const current = await getStatus(controller.signal)
+            if (hasJobId(current) && current.status !== 'idle') {
+              setRecoveryNotice(
+                'An active transcription was found. Its progress is shown here.',
+              )
+              jobIdRef.current = current.job_id
+              setJobId(current.job_id)
+              updateStatus(current)
+
+              if (current.status === 'completed') {
+                setPhase('processing')
+                await loadFiles()
+              } else if (isTerminal(current.status)) {
+                setPhase('failed')
+              } else {
+                setPhase('processing')
+                setIsPolling(true)
+                setPollRun((run) => run + 1)
+              }
+              return
+            }
+          } catch (recoveryError) {
+            if (isAbortError(recoveryError)) return
+          }
         }
+
+        setSubmitError(apiErrorMessage(error, 'start'))
+        setPhase('initial')
       } finally {
-        if (!controller.signal.aborted) {
+        if (submitController.current === controller) {
           setIsSubmitting(false)
           submitLock.current = false
         }
       }
     },
-    [onNewJob],
+    [loadFiles, onNewJob, updateStatus],
   )
 
   const retryStatus = useCallback(() => {
@@ -219,8 +356,11 @@ export function useTranscriptionJob(onNewJob: () => void) {
     submitController.current?.abort()
     filesController.current?.abort()
     submitLock.current = false
+    jobIdRef.current = null
+    statusRef.current = initialStatus
     setPhase('initial')
     setStatus(initialStatus)
+    setJobId(null)
     setFiles([])
     setIsSubmitting(false)
     setIsLoadingFiles(false)
@@ -228,6 +368,7 @@ export function useTranscriptionJob(onNewJob: () => void) {
     setSubmitError(null)
     setPollError(null)
     setFilesError(null)
+    setRecoveryNotice(null)
     setLastUrl('')
     onNewJob()
   }, [onNewJob])
@@ -235,12 +376,14 @@ export function useTranscriptionJob(onNewJob: () => void) {
   return {
     phase,
     status,
+    jobId,
     files,
     isSubmitting,
     isLoadingFiles,
     submitError,
     pollError,
     filesError,
+    recoveryNotice,
     start,
     retryStatus,
     retryJob,

@@ -138,7 +138,9 @@ export function FileExplorer({
                     </span>
                     <span className="file-row__details">
                       <strong title={file.name}>{file.name}</strong>
-                      <span>{typeLabel(file.type)} file</span>
+                      <span title={file.error ?? undefined}>
+                        {file.error ?? `${typeLabel(file.type)} file`}
+                      </span>
                     </span>
                     <span className="file-row__status" data-status={file.status}>
                       {file.status === 'ready' ? (

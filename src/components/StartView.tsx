@@ -13,7 +13,9 @@ interface StartViewProps {
 function isDriveFolderLink(value: string) {
   try {
     const url = new URL(value.trim())
-    if (url.protocol !== 'https:' || url.hostname !== 'drive.google.com') return false
+    const isDriveHost =
+      url.hostname === 'drive.google.com' || url.hostname === 'www.drive.google.com'
+    if (url.protocol !== 'https:' || !isDriveHost) return false
 
     const segments = url.pathname.split('/').filter(Boolean)
     const folderIndex = segments.indexOf('folders')
@@ -108,7 +110,7 @@ export function StartView({
             <div className="inline-error" role="alert">
               <CircleAlert aria-hidden="true" />
               <div>
-                <strong>Server is not running</strong>
+                <strong>Could not start</strong>
                 <p>{submitError}</p>
               </div>
             </div>

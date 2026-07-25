@@ -1,0 +1,9 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "api/transcriber.ts": {
+      "maxDuration": 60,
+      "supportsCancellation": true
+    }
+  }
+}

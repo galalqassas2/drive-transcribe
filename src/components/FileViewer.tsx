@@ -77,7 +77,7 @@ export function FileViewer({
     const url = URL.createObjectURL(blob)
     const anchor = document.createElement('a')
     anchor.href = url
-    anchor.download = openedFile.name
+    anchor.download = viewerState.fileName ?? openedFile.name
     document.body.appendChild(anchor)
     anchor.click()
     anchor.remove()
@@ -99,7 +99,7 @@ export function FileViewer({
             ) : (
               <div className="viewer-unavailable">
                 <CircleAlert aria-hidden="true" />
-                <span>This source could not be transcribed.</span>
+                <span>{selectedFile.error ?? 'This source could not be transcribed.'}</span>
               </div>
             )}
           </div>
@@ -217,7 +217,10 @@ export function FileViewer({
           <div className="viewer-error" role="alert">
             <CircleAlert aria-hidden="true" />
             <h3>Transcript unavailable</h3>
-            <p>This source could not be transcribed. Check the original media and try a new folder.</p>
+            <p>
+              {openedFile.error ??
+                'This source could not be transcribed. Check the original media and try a new folder.'}
+            </p>
           </div>
         )}
 
