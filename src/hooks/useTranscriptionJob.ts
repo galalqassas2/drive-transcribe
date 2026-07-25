@@ -84,13 +84,22 @@ function createExplorerFiles(
   })
 
   if (jobStatus === 'completed' && files.some((file) => file.status === 'completed')) {
-    rows.push({
-      key: 'combined',
-      backendId: null,
-      name: 'combined.txt',
-      type: 'combined',
-      status: 'ready',
-    })
+    rows.push(
+      {
+        key: 'combined:srt',
+        backendId: null,
+        name: 'combined.srt',
+        type: 'srt',
+        status: 'ready',
+      },
+      {
+        key: 'combined:txt',
+        backendId: null,
+        name: 'combined.txt',
+        type: 'combined',
+        status: 'ready',
+      },
+    )
   }
 
   return rows

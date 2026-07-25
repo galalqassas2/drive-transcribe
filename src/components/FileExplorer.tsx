@@ -113,7 +113,7 @@ export function FileExplorer({
           <ul className="file-list" aria-label="Transcript files">
             {files.map((file, index) => {
               const isSelected = file.key === selectedKey
-              const isCombined = file.type === 'combined'
+              const isCombined = file.backendId === null
 
               return (
                 <li
@@ -156,11 +156,6 @@ export function FileExplorer({
             })}
           </ul>
         )}
-      </div>
-
-      <div className="explorer-footer">
-        <span>Use arrow keys to move</span>
-        <span>Enter to open</span>
       </div>
     </aside>
   )

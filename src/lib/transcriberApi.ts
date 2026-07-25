@@ -16,6 +16,7 @@ import type {
 } from '../types'
 
 export type ApiErrorKind = 'network' | 'timeout' | 'response' | 'validation'
+export type CombinedFormat = 'srt' | 'txt'
 
 type Operation =
   | 'health'
@@ -518,7 +519,11 @@ export function getFile(fileId: string, signal?: AbortSignal) {
   })
 }
 
-export function downloadCombined(jobId?: string, signal?: AbortSignal) {
+export function downloadCombined(
+  format: CombinedFormat,
+  jobId?: string,
+  signal?: AbortSignal,
+) {
   if (jobId !== undefined) requireJobId(jobId)
 
   return request<CombinedDownload>(
@@ -526,13 +531,19 @@ export function downloadCombined(jobId?: string, signal?: AbortSignal) {
     async (response) => ({
       blob: await response.blob(),
       filename:
-        dispositionFilename(response.headers.get('content-disposition')) ?? 'combined.txt',
+        dispositionFilename(response.headers.get('content-disposition')) ??
+        `combined.${format}`,
     }),
     {
-      query: { job_id: jobId },
+      query: { format, job_id: jobId },
       signal,
       timeoutMs: DOWNLOAD_TIMEOUT_MS,
-      headers: { Accept: 'text/plain' },
+      headers: {
+        Accept:
+          format === 'srt'
+            ? 'application/x-subrip, text/plain;q=0.9'
+            : 'text/plain',
+      },
     },
   )
 }

@@ -37,7 +37,7 @@ function contentErrorMessage(error: unknown, file: ExplorerFile) {
       return 'This transcript is no longer available. Refresh the folder results.'
     }
     if (error.status === 409) {
-      return file.type === 'combined'
+      return file.backendId === null
         ? 'The combined transcript is still being prepared. Try again shortly.'
         : 'This transcript is not ready yet. Try again shortly.'
     }
@@ -133,10 +133,11 @@ function App() {
     const token = requestToken.current
     requestController.current?.abort()
 
-    const cacheKey =
-      file.type === 'combined'
-        ? `combined:${job.jobId ?? 'latest'}`
-        : `file:${file.backendId}`
+    const isCombined = file.backendId === null
+    const format = file.type === 'srt' ? 'srt' : 'txt'
+    const cacheKey = isCombined
+      ? `combined:${job.jobId ?? 'latest'}:${format}`
+      : `file:${file.backendId}`
     const cached = force ? undefined : cache.current?.get(cacheKey)
 
     if (cached) {
@@ -159,8 +160,12 @@ function App() {
     requestController.current = controller
 
     try {
-      if (file.type === 'combined') {
-        const download = await downloadCombined(job.jobId ?? undefined, controller.signal)
+      if (isCombined) {
+        const download = await downloadCombined(
+          format,
+          job.jobId ?? undefined,
+          controller.signal,
+        )
         const content = await download.blob.text()
         if (token !== requestToken.current) return
 
