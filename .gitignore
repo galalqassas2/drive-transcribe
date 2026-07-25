@@ -1,6 +1,9 @@
 node_modules
 dist
+.vercel
 .pnpm-store
 .env
+.env.*
+!.env.example
 *.local
 *.log

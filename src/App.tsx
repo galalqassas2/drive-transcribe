@@ -1,6 +1,5 @@
-import { CircleCheck, FolderInput } from 'lucide-react'
-import { useCallback, useMemo, useRef, useState } from 'react'
-import { ApiError, getCombined, getFileContent } from './api'
+import { CircleAlert, CircleCheck, FolderInput } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Brand } from './components/Brand'
 import { FileExplorer } from './components/FileExplorer'
 import { FileViewer } from './components/FileViewer'
@@ -8,6 +7,12 @@ import { ProcessingView } from './components/ProcessingView'
 import { StartView } from './components/StartView'
 import { useTranscriptionJob } from './hooks/useTranscriptionJob'
 import { BoundedLruCache } from './lib/boundedLruCache'
+import {
+  ApiError,
+  downloadCombined,
+  getFile,
+} from './lib/transcriberApi'
+import { jobErrorMessage } from './lib/transcriptionMessages'
 import type {
   ExplorerFile,
   FileContentResponse,
@@ -16,7 +21,7 @@ import type {
 
 type CacheEntry =
   | { kind: 'file'; payload: FileContentResponse }
-  | { kind: 'combined'; content: string }
+  | { kind: 'combined'; content: string; fileName: string }
 
 function cacheEntrySize(entry: CacheEntry) {
   if (entry.kind === 'combined') return entry.content.length * 2
@@ -24,9 +29,23 @@ function cacheEntrySize(entry: CacheEntry) {
 }
 
 function contentErrorMessage(error: unknown, file: ExplorerFile) {
-  if (file.type === 'combined' && error instanceof ApiError && error.status === 409) {
-    return 'The combined transcript is still being prepared. Try again in a moment.'
+  if (error instanceof ApiError) {
+    if (error.status === 401) {
+      return 'The app cannot authenticate with the transcription service. Check the Vercel settings.'
+    }
+    if (error.status === 404) {
+      return 'This transcript is no longer available. Refresh the folder results.'
+    }
+    if (error.status === 409) {
+      return file.type === 'combined'
+        ? 'The combined transcript is still being prepared. Try again shortly.'
+        : 'This transcript is not ready yet. Try again shortly.'
+    }
+    if (error.kind === 'timeout') {
+      return 'The request took too long. Check your connection and try again.'
+    }
   }
+
   return 'The transcript could not be loaded. Check your connection and try again.'
 }
 
@@ -47,6 +66,14 @@ function App() {
   if (!cache.current) {
     cache.current = new BoundedLruCache(6, 8 * 1024 * 1024, cacheEntrySize)
   }
+
+  useEffect(
+    () => () => {
+      requestToken.current += 1
+      requestController.current?.abort()
+    },
+    [],
+  )
 
   const clearWorkspace = useCallback(() => {
     requestToken.current += 1
@@ -106,7 +133,10 @@ function App() {
     const token = requestToken.current
     requestController.current?.abort()
 
-    const cacheKey = file.type === 'combined' ? 'combined' : `file:${file.backendId}`
+    const cacheKey =
+      file.type === 'combined'
+        ? `combined:${job.jobId ?? 'latest'}`
+        : `file:${file.backendId}`
     const cached = force ? undefined : cache.current?.get(cacheKey)
 
     if (cached) {
@@ -116,7 +146,11 @@ function App() {
           : file.type === 'srt'
             ? cached.payload.srt
             : cached.payload.text
-      setViewerState({ status: 'ready', content })
+      setViewerState({
+        status: 'ready',
+        content,
+        ...(cached.kind === 'combined' ? { fileName: cached.fileName } : {}),
+      })
       pendingFileKey.current = null
       return
     }
@@ -126,16 +160,25 @@ function App() {
 
     try {
       if (file.type === 'combined') {
-        const content = await getCombined(controller.signal)
+        const download = await downloadCombined(job.jobId ?? undefined, controller.signal)
+        const content = await download.blob.text()
         if (token !== requestToken.current) return
 
-        cache.current?.set(cacheKey, { kind: 'combined', content })
-        setViewerState({ status: 'ready', content })
+        cache.current?.set(cacheKey, {
+          kind: 'combined',
+          content,
+          fileName: download.filename,
+        })
+        setViewerState({
+          status: 'ready',
+          content,
+          fileName: download.filename,
+        })
         return
       }
 
       if (!file.backendId) throw new Error('Missing file identifier')
-      const payload = await getFileContent(file.backendId, controller.signal)
+      const payload = await getFile(file.backendId, controller.signal)
       if (token !== requestToken.current) return
 
       cache.current?.set(cacheKey, { kind: 'file', payload })
@@ -155,7 +198,7 @@ function App() {
     } finally {
       if (token === requestToken.current) pendingFileKey.current = null
     }
-  }, [])
+  }, [job.jobId])
 
   const closeFile = useCallback(() => {
     requestToken.current += 1
@@ -195,6 +238,7 @@ function App() {
       <ProcessingView
         status={job.status}
         pollError={job.pollError}
+        recoveryNotice={job.recoveryNotice}
         isFailed={job.phase === 'failed'}
         isSubmitting={job.isSubmitting}
         isLoadingFiles={job.isLoadingFiles}
@@ -206,15 +250,24 @@ function App() {
   }
 
   const readyCount = job.files.filter((file) => file.status === 'ready').length
+  const hasPartialFailures = job.files.some((file) => file.status === 'failed')
 
   return (
     <main className="results-page">
       <header className="results-header">
         <Brand />
-        <div className="results-header__status">
-          <CircleCheck aria-hidden="true" />
+        <div
+          className="results-header__status"
+          data-warning={hasPartialFailures || undefined}
+          title={job.status.error ? jobErrorMessage(job.status.error) : undefined}
+        >
+          {hasPartialFailures ? (
+            <CircleAlert aria-hidden="true" />
+          ) : (
+            <CircleCheck aria-hidden="true" />
+          )}
           <span>transcripts ready</span>
-          <small>{readyCount} files</small>
+          <small>{hasPartialFailures ? 'some files need attention' : `${readyCount} files`}</small>
         </div>
         <button
           className="new-folder-button"
