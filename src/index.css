@@ -86,6 +86,17 @@ input:focus-visible {
   background: #dceaff;
 }
 
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
+  white-space: nowrap;
+}
+
 #root {
   min-height: 100dvh;
 }
@@ -1161,6 +1172,82 @@ input:focus-visible {
   font-weight: 560;
 }
 
+.results-header__actions {
+  display: flex;
+  min-width: 0;
+  justify-self: end;
+  align-items: center;
+  gap: 5px;
+}
+
+.download-all-button {
+  display: inline-flex;
+  min-height: 38px;
+  padding: 0 14px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid #155bc5;
+  border-radius: 10px;
+  color: #ffffff;
+  background: var(--accent);
+  box-shadow: 0 1px 2px rgb(22 67 132 / 18%), 0 6px 15px rgb(29 103 214 / 14%);
+  font-size: 12px;
+  font-weight: 690;
+  letter-spacing: -0.008em;
+  white-space: nowrap;
+  transition: border-color 150ms ease, background-color 150ms ease,
+    box-shadow 150ms ease, transform 100ms ease;
+}
+
+.download-all-button:hover:not(:disabled) {
+  border-color: #104fae;
+  background: var(--accent-strong);
+  box-shadow: 0 2px 3px rgb(22 67 132 / 20%), 0 8px 18px rgb(29 103 214 / 18%);
+  transform: translateY(-1px);
+}
+
+.download-all-button:active:not(:disabled) {
+  box-shadow: 0 1px 2px rgb(22 67 132 / 16%);
+  transform: translateY(0) scale(0.98);
+}
+
+.download-all-button:disabled {
+  opacity: 0.62;
+}
+
+.download-all-button[data-state='loading'] {
+  cursor: progress;
+  opacity: 1;
+}
+
+.download-all-button[data-state='success'] {
+  border-color: #11662e;
+  background: var(--success);
+  box-shadow: 0 1px 2px rgb(19 115 51 / 18%), 0 6px 15px rgb(19 115 51 / 13%);
+}
+
+.download-all-button[data-state='error'] {
+  border-color: #e7c1bd;
+  color: var(--danger);
+  background: var(--danger-soft);
+  box-shadow: none;
+}
+
+.download-all-button[data-state='error']:hover:not(:disabled) {
+  border-color: #dba8a3;
+  color: #992019;
+  background: #fae4e2;
+  box-shadow: none;
+}
+
+.download-all-button svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  stroke-width: 2;
+}
+
 .new-folder-button {
   display: inline-flex;
   min-height: 36px;
@@ -2048,6 +2135,13 @@ input:focus-visible {
     padding: 0;
   }
 
+  .download-all-button {
+    width: 38px;
+    min-height: 38px;
+    padding: 0;
+  }
+
+  .download-all-button span,
   .new-folder-button span {
     display: none;
   }
