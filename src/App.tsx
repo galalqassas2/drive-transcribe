@@ -1,4 +1,10 @@
-import { CircleAlert, CircleCheck, FolderInput } from 'lucide-react'
+import {
+  CircleAlert,
+  CircleCheck,
+  Download,
+  FolderInput,
+  LoaderCircle,
+} from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Brand } from './components/Brand'
 import { FileExplorer } from './components/FileExplorer'
@@ -10,8 +16,14 @@ import { BoundedLruCache } from './lib/boundedLruCache'
 import {
   ApiError,
   downloadCombined,
+  getDriveFolderName,
   getFile,
 } from './lib/transcriberApi'
+import {
+  archiveFilename,
+  createTranscriptArchive,
+  transcriptFilename,
+} from './lib/transcriptArchive'
 import { jobErrorMessage } from './lib/transcriptionMessages'
 import type {
   ExplorerFile,
@@ -22,6 +34,12 @@ import type {
 type CacheEntry =
   | { kind: 'file'; payload: FileContentResponse }
   | { kind: 'combined'; content: string; fileName: string }
+
+type DownloadAllState =
+  | { status: 'idle' }
+  | { status: 'loading'; completed: number; total: number }
+  | { status: 'success'; total: number }
+  | { status: 'error'; message: string }
 
 function cacheEntrySize(entry: CacheEntry) {
   if (entry.kind === 'combined') return entry.content.length * 2
@@ -49,6 +67,30 @@ function contentErrorMessage(error: unknown, file: ExplorerFile) {
   return 'The transcript could not be loaded. Check your connection and try again.'
 }
 
+function downloadAllErrorMessage(error: unknown) {
+  if (error instanceof ApiError) {
+    if (error.kind === 'timeout') {
+      return 'The download took too long. Check your connection and try again.'
+    }
+    if (error.status === 404) {
+      return 'One or more transcripts are no longer available.'
+    }
+  }
+
+  return 'The ZIP could not be prepared. Check your connection and try again.'
+}
+
+function saveDownload(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  URL.revokeObjectURL(url)
+}
+
 function App() {
   const [driveUrl, setDriveUrl] = useState('')
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
@@ -57,8 +99,14 @@ function App() {
     status: 'idle',
     content: null,
   })
+  const [folderName, setFolderName] = useState<string | null>(null)
+  const [downloadAllState, setDownloadAllState] = useState<DownloadAllState>({
+    status: 'idle',
+  })
   const [mobileViewerOpen, setMobileViewerOpen] = useState(false)
   const requestController = useRef<AbortController | null>(null)
+  const downloadController = useRef<AbortController | null>(null)
+  const downloadFeedbackTimer = useRef<number | null>(null)
   const requestToken = useRef(0)
   const pendingFileKey = useRef<string | null>(null)
   const cache = useRef<BoundedLruCache<string, CacheEntry> | null>(null)
@@ -71,6 +119,10 @@ function App() {
     () => () => {
       requestToken.current += 1
       requestController.current?.abort()
+      downloadController.current?.abort()
+      if (downloadFeedbackTimer.current !== null) {
+        window.clearTimeout(downloadFeedbackTimer.current)
+      }
     },
     [],
   )
@@ -78,8 +130,16 @@ function App() {
   const clearWorkspace = useCallback(() => {
     requestToken.current += 1
     requestController.current?.abort()
+    downloadController.current?.abort()
+    downloadController.current = null
+    if (downloadFeedbackTimer.current !== null) {
+      window.clearTimeout(downloadFeedbackTimer.current)
+      downloadFeedbackTimer.current = null
+    }
     pendingFileKey.current = null
     cache.current?.clear()
+    setFolderName(null)
+    setDownloadAllState({ status: 'idle' })
     setSelectedKey(null)
     setOpenedFile(null)
     setViewerState({ status: 'idle', content: null })
@@ -87,11 +147,127 @@ function App() {
   }, [])
 
   const job = useTranscriptionJob(clearWorkspace)
+  const folderUrl = 'folder_url' in job.status ? job.status.folder_url : null
+
+  useEffect(() => {
+    setFolderName(null)
+    if (!folderUrl) return
+
+    const controller = new AbortController()
+    void getDriveFolderName(folderUrl, controller.signal)
+      .then((folder) => setFolderName(folder.name))
+      .catch(() => {})
+
+    return () => controller.abort()
+  }, [folderUrl])
 
   const selectedFile = useMemo(
     () => job.files.find((file) => file.key === selectedKey) ?? null,
     [job.files, selectedKey],
   )
+
+  const downloadableFiles = useMemo(
+    () =>
+      job.files.filter(
+        (file) =>
+          file.backendId !== null &&
+          file.type === 'srt' &&
+          file.status === 'ready',
+      ),
+    [job.files],
+  )
+
+  const downloadAll = useCallback(async () => {
+    if (
+      downloadController.current ||
+      downloadableFiles.length === 0
+    ) {
+      return
+    }
+
+    if (downloadFeedbackTimer.current !== null) {
+      window.clearTimeout(downloadFeedbackTimer.current)
+      downloadFeedbackTimer.current = null
+    }
+
+    const controller = new AbortController()
+    downloadController.current = controller
+    const total = downloadableFiles.length
+    setDownloadAllState({ status: 'loading', completed: 0, total })
+
+    try {
+      const folderNameRequest =
+        folderName || !folderUrl
+          ? Promise.resolve(folderName)
+          : getDriveFolderName(folderUrl, controller.signal)
+              .then((folder) => folder.name)
+              .catch(() => null)
+      const transcripts: Array<{ sourceName: string; content: string }> = []
+      let nextIndex = 0
+      let completed = 0
+
+      await Promise.all(
+        Array.from({ length: Math.min(3, total) }, async () => {
+          while (nextIndex < total) {
+            const index = nextIndex
+            nextIndex += 1
+            const file = downloadableFiles[index]
+            const fileId = file.backendId
+            if (!fileId) throw new Error('Missing file identifier')
+
+            const cacheKey = `file:${fileId}`
+            const cached = cache.current?.get(cacheKey)
+            const payload =
+              cached?.kind === 'file'
+                ? cached.payload
+                : await getFile(fileId, controller.signal)
+
+            if (cached?.kind !== 'file') {
+              cache.current?.set(cacheKey, { kind: 'file', payload })
+            }
+
+            transcripts[index] = {
+              sourceName: file.name,
+              content: payload.srt,
+            }
+            completed += 1
+            setDownloadAllState({ status: 'loading', completed, total })
+          }
+        }),
+      )
+
+      const resolvedFolderName = await folderNameRequest
+      if (resolvedFolderName) setFolderName(resolvedFolderName)
+
+      const usedNames = new Set<string>()
+      const archive = await createTranscriptArchive(
+        transcripts.map((transcript) => ({
+          name: transcriptFilename(transcript.sourceName, usedNames),
+          content: transcript.content,
+        })),
+        controller.signal,
+      )
+
+      if (controller.signal.aborted) return
+      saveDownload(archive, archiveFilename())
+      setDownloadAllState({ status: 'success', total })
+      downloadFeedbackTimer.current = window.setTimeout(() => {
+        setDownloadAllState({ status: 'idle' })
+        downloadFeedbackTimer.current = null
+      }, 2400)
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return
+      controller.abort()
+      setDownloadAllState({
+        status: 'error',
+        message: downloadAllErrorMessage(error),
+      })
+    } finally {
+      if (downloadController.current === controller) {
+        downloadController.current = null
+      }
+    }
+  }, [downloadableFiles, folderName, folderUrl])
 
   const selectFile = useCallback(
     (file: ExplorerFile) => {
@@ -259,6 +435,20 @@ function App() {
 
   const readyCount = job.files.filter((file) => file.status === 'ready').length
   const hasPartialFailures = job.files.some((file) => file.status === 'failed')
+  const downloadAllLabel =
+    downloadAllState.status === 'loading'
+      ? `preparing ${downloadAllState.completed}/${downloadAllState.total}`
+      : downloadAllState.status === 'success'
+        ? 'downloaded'
+        : downloadAllState.status === 'error'
+          ? 'try again'
+          : 'download all'
+  const downloadAllMessage =
+    downloadAllState.status === 'success'
+      ? `${downloadAllState.total} transcripts downloaded`
+      : downloadAllState.status === 'error'
+        ? downloadAllState.message
+        : ''
 
   return (
     <main className="results-page">
@@ -277,15 +467,51 @@ function App() {
           <span>transcripts ready</span>
           <small>{hasPartialFailures ? 'some files need attention' : `${readyCount} files`}</small>
         </div>
-        <button
-          className="new-folder-button"
-          type="button"
-          onClick={resetApp}
-          aria-label="Process another folder"
-        >
-          <FolderInput aria-hidden="true" />
-          <span>new folder</span>
-        </button>
+        <div className="results-header__actions">
+          <button
+            className="download-all-button"
+            type="button"
+            onClick={() => void downloadAll()}
+            disabled={
+              downloadAllState.status === 'loading' ||
+              downloadableFiles.length === 0
+            }
+            data-state={
+              downloadAllState.status === 'idle'
+                ? undefined
+                : downloadAllState.status
+            }
+            aria-label={`Download all ${downloadableFiles.length} SRT transcripts as TXT files`}
+            title={
+              downloadAllState.status === 'error'
+                ? downloadAllState.message
+                : `Download ${downloadableFiles.length} transcripts as TXT files`
+            }
+          >
+            {downloadAllState.status === 'loading' ? (
+              <LoaderCircle className="spin" aria-hidden="true" />
+            ) : downloadAllState.status === 'success' ? (
+              <CircleCheck aria-hidden="true" />
+            ) : downloadAllState.status === 'error' ? (
+              <CircleAlert aria-hidden="true" />
+            ) : (
+              <Download aria-hidden="true" />
+            )}
+            <span>{downloadAllLabel}</span>
+          </button>
+          <button
+            className="new-folder-button"
+            type="button"
+            onClick={resetApp}
+            aria-label="Process another folder"
+          >
+            <FolderInput aria-hidden="true" />
+            <span>new folder</span>
+          </button>
+          <span className="visually-hidden" role="status" aria-live="polite">
+            {downloadAllMessage}
+          </span>
+        </div>
       </header>
 
       <div className="workspace-wrap">

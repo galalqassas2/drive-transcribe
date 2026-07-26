@@ -117,6 +117,10 @@ export interface CombinedDownload {
   filename: string
 }
 
+export interface DriveFolderResponse {
+  name: string
+}
+
 export type TranscriptType = 'srt' | 'txt' | 'combined'
 export type ExplorerFileStatus = 'ready' | 'failed'
 

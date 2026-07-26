@@ -8,6 +8,7 @@ import type {
   BackendStatusResponse,
   CancelResponse,
   CombinedDownload,
+  DriveFolderResponse,
   FileContentResponse,
   FilesResponse,
   HealthResponse,
@@ -28,6 +29,7 @@ type Operation =
   | 'files'
   | 'file'
   | 'combined'
+  | 'folder_name'
 
 type QueryValue = string | undefined
 
@@ -416,6 +418,14 @@ function parseFileContent(value: unknown): FileContentResponse {
   }
 }
 
+function parseDriveFolder(value: unknown): DriveFolderResponse {
+  if (!isRecord(value) || typeof value.name !== 'string' || !value.name.trim()) {
+    return invalidResponse('The API returned an invalid folder name')
+  }
+
+  return { name: value.name.trim() }
+}
+
 function safeFilename(value: string) {
   const filename = value.split(/[\\/]/).pop()
   if (!filename) return undefined
@@ -515,6 +525,18 @@ export function getFile(fileId: string, signal?: AbortSignal) {
 
   return jsonRequest('file', parseFileContent, {
     query: { file_id: normalizedId },
+    signal,
+  })
+}
+
+export function getDriveFolderName(driveUrl: string, signal?: AbortSignal) {
+  const normalizedUrl = driveUrl.trim()
+  if (!normalizedUrl) {
+    throw new ApiError('Drive URL is required', undefined, 'validation')
+  }
+
+  return jsonRequest('folder_name', parseDriveFolder, {
+    query: { drive_url: normalizedUrl },
     signal,
   })
 }

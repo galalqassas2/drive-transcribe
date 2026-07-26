@@ -8,6 +8,7 @@ type Operation =
   | 'files'
   | 'file'
   | 'combined'
+  | 'folder_name'
 
 type UpstreamRequest = {
   method: 'GET' | 'POST'
@@ -26,6 +27,7 @@ const operations = new Set<Operation>([
   'files',
   'file',
   'combined',
+  'folder_name',
 ])
 
 const methods: Record<Operation, 'GET' | 'POST'> = {
@@ -38,6 +40,7 @@ const methods: Record<Operation, 'GET' | 'POST'> = {
   files: 'GET',
   file: 'GET',
   combined: 'GET',
+  folder_name: 'GET',
 }
 
 const jobIdPattern = /^[0-9a-f]{32}$/i
@@ -160,9 +163,70 @@ function validateDriveUrl(value: unknown) {
   return driveUrl
 }
 
+function decodeHtmlEntities(value: string) {
+  const namedEntities: Record<string, string> = {
+    amp: '&',
+    apos: "'",
+    gt: '>',
+    lt: '<',
+    nbsp: ' ',
+    quot: '"',
+  }
+
+  return value.replace(
+    /&(?:#(\d+)|#x([0-9a-f]+)|([a-z]+));/gi,
+    (entity, decimal: string | undefined, hex: string | undefined, named: string | undefined) => {
+      if (named) return namedEntities[named.toLowerCase()] ?? entity
+
+      const codePoint = Number.parseInt(decimal ?? hex ?? '', hex ? 16 : 10)
+      return Number.isInteger(codePoint) && codePoint <= 0x10ffff
+        ? String.fromCodePoint(codePoint)
+        : entity
+    },
+  )
+}
+
+async function driveFolderNameResponse(driveUrl: string, signal: AbortSignal) {
+  let response: Response
+
+  try {
+    response = await fetch(driveUrl, {
+      headers: { Accept: 'text/html' },
+      redirect: 'follow',
+      signal,
+    })
+  } catch {
+    throw new RequestError(502, 'The Google Drive folder name could not be loaded')
+  }
+
+  if (!response.ok) {
+    throw new RequestError(502, 'The Google Drive folder name could not be loaded')
+  }
+
+  const html = await response.text()
+  const title = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]
+  const name = title
+    ? decodeHtmlEntities(title).replace(/\s+-\s+Google Drive\s*$/i, '').trim()
+    : ''
+
+  if (!name) {
+    throw new RequestError(502, 'The Google Drive folder name could not be read')
+  }
+
+  return Response.json(
+    { name },
+    {
+      headers: {
+        'Cache-Control': 'no-store',
+        'X-Content-Type-Options': 'nosniff',
+      },
+    },
+  )
+}
+
 async function createUpstreamRequest(
   request: Request,
-  operation: Operation,
+  operation: Exclude<Operation, 'folder_name'>,
   params: URLSearchParams,
 ): Promise<UpstreamRequest> {
   switch (operation) {
@@ -279,6 +343,14 @@ async function handle(request: Request) {
 
     if (request.method !== expectedMethod) {
       return errorResponse(405, 'Method not allowed', expectedMethod)
+    }
+
+    if (operation === 'folder_name') {
+      assertAllowedParameters(url.searchParams, ['drive_url'])
+      const driveUrl = validateDriveUrl(
+        readParameter(url.searchParams, 'drive_url', true),
+      )
+      return await driveFolderNameResponse(driveUrl, request.signal)
     }
 
     upstreamRequest = await createUpstreamRequest(request, operation, url.searchParams)
