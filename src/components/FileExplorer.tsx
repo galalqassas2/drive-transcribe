@@ -22,6 +22,12 @@ function typeLabel(type: ExplorerFile['type']) {
   return type === 'combined' ? '.txt' : `.${type}`
 }
 
+function fileDescription(file: ExplorerFile) {
+  return file.key === 'combined:txt'
+    ? 'recommended for ChatGPT'
+    : `${typeLabel(file.type)} file`
+}
+
 export function FileExplorer({
   files,
   selectedKey,
@@ -114,12 +120,14 @@ export function FileExplorer({
             {files.map((file, index) => {
               const isSelected = file.key === selectedKey
               const isCombined = file.backendId === null
+              const startsCombinedGroup =
+                isCombined && (index === 0 || files[index - 1].backendId !== null)
 
               return (
                 <li
                   className="file-row"
                   data-selected={isSelected || undefined}
-                  data-combined={isCombined || undefined}
+                  data-combined={startsCombinedGroup || undefined}
                   key={file.key}
                 >
                   <button
@@ -139,7 +147,7 @@ export function FileExplorer({
                     <span className="file-row__details">
                       <strong title={file.name}>{file.name}</strong>
                       <span title={file.error ?? undefined}>
-                        {file.error ?? `${typeLabel(file.type)} file`}
+                        {file.error ?? fileDescription(file)}
                       </span>
                     </span>
                     <span className="file-row__status" data-status={file.status}>
