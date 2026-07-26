@@ -148,40 +148,34 @@ The backend gateway acts as a security firewall and protocol translator. Request
 
 ## Production Inspection
 
-### Direct Backend Access
+### Direct Backend Access (Mandatory)
 
-Use the upstream server directly for backend diagnostics. Do not use Vercel query parameters with these endpoints.
+Always query the upstream server IP directly (`https://2.24.138.173`) for backend status, health, and diagnostics. **Do NOT access through Vercel or use Vercel proxy endpoints (`drive-transcribe.vercel.app`) when checking backend server state.**
 
 Backend base URL: `https://2.24.138.173`
 
-- `GET /health` is available without authentication.
-- All other endpoints require the existing API key in the `X-API-Key` header.
-- Load `TRANSCRIBER_API_KEY` from an authorized secret source into the shell. Never print, log, or commit it.
+- `GET /health` is available directly without authentication.
+- All operational endpoints (`/status`, `/jobs`, `/jobs/{job_id}`) require the API key passed directly in the `X-API-Key` header to the server IP.
+- Load `TRANSCRIBER_API_KEY` into the local shell environment before executing direct commands.
 
-PowerShell example:
+PowerShell example (Direct IP Access):
 
 ```powershell
 $upstream = "https://2.24.138.173"
-curl.exe -fsS "$upstream/health"
-curl.exe -fsS -H "X-API-Key: $env:TRANSCRIBER_API_KEY" "$upstream/status"
-curl.exe -fsS -H "X-API-Key: $env:TRANSCRIBER_API_KEY" "$upstream/jobs"
-curl.exe -fsS -H "X-API-Key: $env:TRANSCRIBER_API_KEY" "$upstream/jobs/<job_id>"
+# Direct Health Check
+curl.exe -fsS -k "$upstream/health"
+
+# Direct Job Status Telemetry
+curl.exe -fsS -k -H "X-API-Key: $env:TRANSCRIBER_API_KEY" "$upstream/status"
+
+# Direct Job History
+curl.exe -fsS -k -H "X-API-Key: $env:TRANSCRIBER_API_KEY" "$upstream/jobs"
+
+# Direct Specific Job Query
+curl.exe -fsS -k -H "X-API-Key: $env:TRANSCRIBER_API_KEY" "$upstream/jobs/<job_id>"
 ```
 
-Use the native paths listed in the Operation Endpoint Matrix. Never bypass TLS verification.
-
-### Vercel Proxy Access
-
-The deployed proxy remains useful for checking the browser-facing connection.
-
-Production base URL: `https://drive-transcribe.vercel.app`
-
-| Check | Public URL |
-| :--- | :--- |
-| Service health | `https://drive-transcribe.vercel.app/api/transcriber?operation=health` |
-| Current or latest job | `https://drive-transcribe.vercel.app/api/transcriber?operation=status` |
-| Job history | `https://drive-transcribe.vercel.app/api/transcriber?operation=jobs` |
-| Specific job details | `https://drive-transcribe.vercel.app/api/transcriber?operation=job&job_id=<32-hex-job-id>` |
+Use the native paths listed in the Operation Endpoint Matrix. Never use Vercel proxy endpoints for diagnostic server checks.
 
 ### Inspection Workflow
 
