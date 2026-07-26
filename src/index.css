@@ -607,7 +607,6 @@ input:focus-visible {
   white-space: nowrap;
 }
 
-.resource-wait,
 .job-message {
   display: grid;
   margin-top: 14px;
@@ -618,13 +617,6 @@ input:focus-visible {
   border-radius: var(--radius-control);
 }
 
-.resource-wait {
-  border: 1px solid #dce7f7;
-  color: var(--accent);
-  background: #f4f8ff;
-}
-
-.resource-wait > svg,
 .job-message > svg {
   width: 18px;
   height: 18px;
@@ -632,7 +624,6 @@ input:focus-visible {
   stroke-width: 1.9;
 }
 
-.resource-wait strong,
 .job-message strong {
   display: block;
   color: var(--ink-soft);
@@ -640,7 +631,6 @@ input:focus-visible {
   font-weight: 730;
 }
 
-.resource-wait p,
 .job-message p {
   margin: 3px 0 0;
   color: var(--muted-strong);
@@ -2125,7 +2115,6 @@ input:focus-visible {
   }
 
   .status-error,
-  .resource-wait,
   .job-message {
     grid-template-columns: auto 1fr;
   }

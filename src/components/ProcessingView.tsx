@@ -3,7 +3,6 @@ import {
   AudioLines,
   CircleAlert,
   FileVideo,
-  Gauge,
   RotateCw,
   WifiOff,
 } from 'lucide-react'
@@ -39,7 +38,7 @@ const phaseCopy: Record<BackendJobPhase | 'idle', string> = {
   extracting: 'Preparing audio',
   transcribing: 'Creating transcripts',
   writing: 'Saving transcripts',
-  waiting_resources: 'Waiting for resources',
+  waiting_resources: 'Creating transcripts',
   ready: 'Preparing your files',
   failed: 'Transcription stopped',
   cancelled: 'Transcription cancelled',
@@ -220,16 +219,6 @@ export function ProcessingView({
               )}
             </div>
           </div>
-
-          {status.phase === 'waiting_resources' && (
-            <div className="resource-wait" role="status">
-              <Gauge aria-hidden="true" />
-              <div>
-                <strong>Waiting for resources</strong>
-                <p>The server will continue automatically when capacity is available.</p>
-              </div>
-            </div>
-          )}
 
           {pollError && (
             <div className="status-error" role="alert">
