@@ -15,6 +15,7 @@ import type {
 } from '../types'
 
 const pollInterval = 2500
+const maxPollInterval = 30_000
 
 const initialStatus: BackendStatusResponse = {
   status: 'idle',
@@ -27,6 +28,17 @@ const initialStatus: BackendStatusResponse = {
 
 function isAbortError(error: unknown) {
   return error instanceof DOMException && error.name === 'AbortError'
+}
+
+function isTransientPollError(error: unknown) {
+  return (
+    error instanceof ApiError &&
+    (error.kind === 'timeout' ||
+      error.kind === 'network' ||
+      error.status === 408 ||
+      error.status === 429 ||
+      (error.status !== undefined && error.status >= 500))
+  )
 }
 
 function hasJobId(status: BackendStatusResponse): status is BackendStatusResponse & {
@@ -212,6 +224,7 @@ export function useTranscriptionJob(onNewJob: () => void) {
     let active = true
     let timer: number | undefined
     let pollController: AbortController | null = null
+    let failures = 0
 
     const poll = async () => {
       pollController = new AbortController()
@@ -222,6 +235,7 @@ export function useTranscriptionJob(onNewJob: () => void) {
 
         updateStatus(response)
         setPollError(null)
+        failures = 0
 
         if (isTerminal(response.status)) {
           setIsPolling(false)
@@ -236,8 +250,21 @@ export function useTranscriptionJob(onNewJob: () => void) {
         timer = window.setTimeout(poll, pollInterval)
       } catch (error) {
         if (!active || isAbortError(error)) return
+        const isTransient = isTransientPollError(error)
+        setPollError(
+          isTransient
+            ? 'Progress refresh is delayed. Retrying automatically.'
+            : apiErrorMessage(error, 'poll'),
+        )
+
+        if (isTransient) {
+          failures += 1
+          const delay = Math.min(pollInterval * 2 ** failures, maxPollInterval)
+          timer = window.setTimeout(poll, delay)
+          return
+        }
+
         setIsPolling(false)
-        setPollError(apiErrorMessage(error, 'poll'))
       }
     }
 
