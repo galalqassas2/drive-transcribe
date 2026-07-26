@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import {
   AudioLines,
   CircleAlert,
+  CircleStop,
   FileVideo,
   RotateCw,
   WifiOff,
@@ -25,8 +26,11 @@ interface ProcessingViewProps {
   isFailed: boolean
   isSubmitting: boolean
   isLoadingFiles: boolean
+  isCancelling: boolean
+  cancelError: string | null
   onRetryStatus: () => void
   onRetryJob: () => void
+  onCancel: () => void
   onChangeFolder: () => void
 }
 
@@ -71,6 +75,17 @@ const stoppedStatuses = new Set<BackendStatusResponse['status']>([
 
 function clampProgress(value: number) {
   return Number.isFinite(value) ? Math.min(100, Math.max(0, value)) : 0
+}
+
+function overallProgress(status: BackendStatusResponse) {
+  const reported = clampProgress(status.progress)
+  if (status.files.length === 0) return reported
+
+  const fileAverage =
+    status.files.reduce((total, file) => total + clampProgress(file.progress), 0) /
+    status.files.length
+
+  return Math.max(reported, fileAverage)
 }
 
 function stoppedCopy(status: BackendStatusResponse['status']) {
@@ -119,12 +134,15 @@ export function ProcessingView({
   isFailed,
   isSubmitting,
   isLoadingFiles,
+  isCancelling,
+  cancelError,
   onRetryStatus,
   onRetryJob,
+  onCancel,
   onChangeFolder,
 }: ProcessingViewProps) {
   const prefersReducedMotion = usePrefersReducedMotion()
-  const progress = clampProgress(status.progress)
+  const progress = overallProgress(status)
   const stopped = isFailed || stoppedStatuses.has(status.status)
   const heading = stoppedCopy(status.status)
   const title = isLoadingFiles
@@ -172,8 +190,8 @@ export function ProcessingView({
         </div>
 
         <div className="progress-panel">
-          <div className="progress-panel__top" aria-live="polite">
-            <div>
+          <div className="progress-panel__top">
+            <div className="progress-panel__summary" aria-live="polite">
               <span className="progress-label">{title}</span>
               {status.files.length > 0 && (
                 <span className="progress-ready">
@@ -182,8 +200,33 @@ export function ProcessingView({
                 </span>
               )}
             </div>
-            <strong>{Math.round(progress)}%</strong>
+            <div className="progress-panel__actions">
+              <strong>{Math.round(progress)}%</strong>
+              {status.status === 'active' && !stopped && (
+                <button
+                  className="cancel-button"
+                  type="button"
+                  onClick={onCancel}
+                  disabled={isCancelling || status.cancel_requested}
+                >
+                  {isCancelling ? (
+                    <RotateCw className="spin" aria-hidden="true" />
+                  ) : (
+                    <CircleStop aria-hidden="true" />
+                  )}
+                  <span>
+                    {isCancelling || status.cancel_requested ? 'cancelling' : 'cancel'}
+                  </span>
+                </button>
+              )}
+            </div>
           </div>
+
+          {cancelError && (
+            <p className="cancel-error" role="alert">
+              {cancelError}
+            </p>
+          )}
 
           <div
             className="progress-track"

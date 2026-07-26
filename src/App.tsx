@@ -247,8 +247,11 @@ function App() {
         isFailed={job.phase === 'failed'}
         isSubmitting={job.isSubmitting}
         isLoadingFiles={job.isLoadingFiles}
+        isCancelling={job.isCancelling}
+        cancelError={job.cancelError}
         onRetryStatus={job.retryStatus}
         onRetryJob={job.retryJob}
+        onCancel={() => void job.cancel()}
         onChangeFolder={resetApp}
       />
     )
