@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   ApiError,
+  cancelJob,
   getJob,
   getStatus,
   listFiles,
@@ -9,6 +10,7 @@ import {
 import { fileErrorMessage } from '../lib/transcriptionMessages'
 import type {
   BackendFile,
+  BackendJob,
   BackendStatusResponse,
   ExplorerFile,
   JobPhase,
@@ -41,9 +43,7 @@ function isTransientPollError(error: unknown) {
   )
 }
 
-function hasJobId(status: BackendStatusResponse): status is BackendStatusResponse & {
-  job_id: string
-} {
+function hasJobId(status: BackendStatusResponse): status is BackendJob {
   return 'job_id' in status && typeof status.job_id === 'string'
 }
 
@@ -117,7 +117,10 @@ function createExplorerFiles(
   return rows
 }
 
-function apiErrorMessage(error: unknown, context: 'start' | 'poll' | 'files') {
+function apiErrorMessage(
+  error: unknown,
+  context: 'start' | 'poll' | 'files' | 'cancel',
+) {
   if (error instanceof ApiError) {
     if (error.status === 401) {
       return 'The app cannot authenticate with the transcription service. Check the Vercel settings.'
@@ -154,6 +157,9 @@ function apiErrorMessage(error: unknown, context: 'start' | 'poll' | 'files') {
   if (context === 'poll') {
     return 'Could not refresh progress. Check your connection, then retry.'
   }
+  if (context === 'cancel') {
+    return 'The transcription could not be cancelled. Try again.'
+  }
   return 'The transcription could not start. Check the link, then try again.'
 }
 
@@ -165,15 +171,18 @@ export function useTranscriptionJob(onNewJob: () => void) {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isLoadingFiles, setIsLoadingFiles] = useState(false)
   const [isPolling, setIsPolling] = useState(false)
+  const [isCancelling, setIsCancelling] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [pollError, setPollError] = useState<string | null>(null)
   const [filesError, setFilesError] = useState<string | null>(null)
+  const [cancelError, setCancelError] = useState<string | null>(null)
   const [recoveryNotice, setRecoveryNotice] = useState<string | null>(null)
   const [pollRun, setPollRun] = useState(0)
   const [lastUrl, setLastUrl] = useState('')
   const submitLock = useRef(false)
   const submitController = useRef<AbortController | null>(null)
   const filesController = useRef<AbortController | null>(null)
+  const cancelController = useRef<AbortController | null>(null)
   const statusRef = useRef<BackendStatusResponse>(initialStatus)
   const jobIdRef = useRef<string | null>(null)
 
@@ -251,11 +260,6 @@ export function useTranscriptionJob(onNewJob: () => void) {
       } catch (error) {
         if (!active || isAbortError(error)) return
         const isTransient = isTransientPollError(error)
-        setPollError(
-          isTransient
-            ? 'Progress refresh is delayed. Retrying automatically.'
-            : apiErrorMessage(error, 'poll'),
-        )
 
         if (isTransient) {
           failures += 1
@@ -264,6 +268,7 @@ export function useTranscriptionJob(onNewJob: () => void) {
           return
         }
 
+        setPollError(apiErrorMessage(error, 'poll'))
         setIsPolling(false)
       }
     }
@@ -281,6 +286,7 @@ export function useTranscriptionJob(onNewJob: () => void) {
     () => () => {
       submitController.current?.abort()
       filesController.current?.abort()
+      cancelController.current?.abort()
     },
     [],
   )
@@ -297,6 +303,7 @@ export function useTranscriptionJob(onNewJob: () => void) {
       setSubmitError(null)
       setPollError(null)
       setFilesError(null)
+      setCancelError(null)
       setRecoveryNotice(null)
       setFiles([])
       setLastUrl(driveUrl)
@@ -337,7 +344,7 @@ export function useTranscriptionJob(onNewJob: () => void) {
         if (shouldRecover) {
           try {
             const current = await getStatus(controller.signal)
-            if (hasJobId(current) && current.status !== 'idle') {
+            if (hasJobId(current)) {
               setRecoveryNotice(
                 'An active transcription was found. Its progress is shown here.',
               )
@@ -384,6 +391,40 @@ export function useTranscriptionJob(onNewJob: () => void) {
     if (lastUrl) void start(lastUrl)
   }, [lastUrl, start])
 
+  const cancel = useCallback(async () => {
+    const currentJobId = jobIdRef.current
+    if (!currentJobId || cancelController.current) return
+
+    const controller = new AbortController()
+    cancelController.current = controller
+    setIsCancelling(true)
+    setCancelError(null)
+
+    try {
+      await cancelJob(currentJobId, controller.signal)
+      const current = statusRef.current
+      if (hasJobId(current) && !isTerminal(current.status)) {
+        updateStatus({
+          ...current,
+          cancel_requested: true,
+          updated_at: Date.now() / 1000,
+        })
+      }
+      setPollError(null)
+      setIsPolling(true)
+      setPollRun((run) => run + 1)
+    } catch (error) {
+      if (!isAbortError(error)) {
+        setCancelError(apiErrorMessage(error, 'cancel'))
+      }
+    } finally {
+      if (cancelController.current === controller) {
+        cancelController.current = null
+        setIsCancelling(false)
+      }
+    }
+  }, [updateStatus])
+
   const clearSubmitError = useCallback(() => {
     setSubmitError(null)
   }, [])
@@ -391,6 +432,8 @@ export function useTranscriptionJob(onNewJob: () => void) {
   const reset = useCallback(() => {
     submitController.current?.abort()
     filesController.current?.abort()
+    cancelController.current?.abort()
+    cancelController.current = null
     submitLock.current = false
     jobIdRef.current = null
     statusRef.current = initialStatus
@@ -401,9 +444,11 @@ export function useTranscriptionJob(onNewJob: () => void) {
     setIsSubmitting(false)
     setIsLoadingFiles(false)
     setIsPolling(false)
+    setIsCancelling(false)
     setSubmitError(null)
     setPollError(null)
     setFilesError(null)
+    setCancelError(null)
     setRecoveryNotice(null)
     setLastUrl('')
     onNewJob()
@@ -416,13 +461,16 @@ export function useTranscriptionJob(onNewJob: () => void) {
     files,
     isSubmitting,
     isLoadingFiles,
+    isCancelling,
     submitError,
     pollError,
     filesError,
+    cancelError,
     recoveryNotice,
     start,
     retryStatus,
     retryJob,
+    cancel,
     retryFiles: loadFiles,
     clearSubmitError,
     reset,

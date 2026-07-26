@@ -474,12 +474,12 @@ input:focus-visible {
 .progress-panel__top {
   display: flex;
   min-width: 0;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
-  gap: 20px;
+  gap: 16px;
 }
 
-.progress-panel__top > div {
+.progress-panel__summary {
   display: flex;
   min-width: 0;
   flex-direction: column;
@@ -502,11 +502,75 @@ input:focus-visible {
   font-weight: 640;
 }
 
-.progress-panel__top > strong {
+.progress-panel__actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 11px;
+}
+
+.progress-panel__actions > strong {
   color: var(--accent);
   font-size: 15px;
   font-variant-numeric: tabular-nums;
   font-weight: 750;
+}
+
+.cancel-button {
+  display: inline-flex;
+  height: 32px;
+  min-width: 76px;
+  padding: 0 11px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid #e8cecb;
+  border-radius: 9px;
+  color: #943c36;
+  background: #fffafa;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  transition:
+    color 150ms ease,
+    border-color 150ms ease,
+    background 150ms ease,
+    transform 150ms ease;
+}
+
+.cancel-button svg {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  stroke-width: 1.9;
+}
+
+.cancel-button span {
+  line-height: 1;
+}
+
+.cancel-button:hover:not(:disabled) {
+  border-color: #dca9a5;
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.cancel-button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.cancel-button:disabled {
+  color: #7b5c59;
+  background: #faf5f4;
+  opacity: 0.7;
+}
+
+.cancel-error {
+  margin: 10px 0 -4px;
+  color: var(--danger);
+  font-size: 11px;
+  font-weight: 560;
+  line-height: 1.45;
 }
 
 .progress-track {
