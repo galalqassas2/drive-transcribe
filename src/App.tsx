@@ -6,7 +6,7 @@ import {
   LoaderCircle,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Brand } from './components/Brand'
+import { AppSidebar } from './components/AppSidebar'
 import { FileExplorer } from './components/FileExplorer'
 import { FileViewer } from './components/FileViewer'
 import { ProcessingView } from './components/ProcessingView'
@@ -26,6 +26,7 @@ import {
 } from './lib/transcriptArchive'
 import { jobErrorMessage } from './lib/transcriptionMessages'
 import type {
+  BackendJobSummary,
   ExplorerFile,
   FileContentResponse,
   ViewerState,
@@ -91,6 +92,22 @@ function saveDownload(blob: Blob, filename: string) {
   URL.revokeObjectURL(url)
 }
 
+function summarizeJob(status: ReturnType<typeof useTranscriptionJob>['status']) {
+  if (!('job_id' in status)) return null
+
+  return {
+    job_id: status.job_id,
+    status: status.status,
+    phase: status.phase,
+    progress: status.progress,
+    current_file: status.current_file,
+    error: status.error,
+    created_at: status.created_at,
+    updated_at: status.updated_at,
+    finished_at: status.finished_at,
+  } satisfies BackendJobSummary
+}
+
 function App() {
   const [driveUrl, setDriveUrl] = useState('')
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
@@ -104,6 +121,7 @@ function App() {
     status: 'idle',
   })
   const [mobileViewerOpen, setMobileViewerOpen] = useState(false)
+  const [sidebarExpanded, setSidebarExpanded] = useState(false)
   const requestController = useRef<AbortController | null>(null)
   const downloadController = useRef<AbortController | null>(null)
   const downloadFeedbackTimer = useRef<number | null>(null)
@@ -147,11 +165,18 @@ function App() {
   }, [])
 
   const job = useTranscriptionJob(clearWorkspace)
+  const clearOpenJobError = job.clearOpenJobError
   const folderUrl = 'folder_url' in job.status ? job.status.folder_url : null
+  const currentJob = useMemo(() => summarizeJob(job.status), [job.status])
+  const navigationLocked =
+    job.phase === 'processing' && job.status.status === 'active'
 
   useEffect(() => {
     setFolderName(null)
-    if (!folderUrl) return
+  }, [folderUrl])
+
+  useEffect(() => {
+    if (!sidebarExpanded || !folderUrl || folderName) return
 
     const controller = new AbortController()
     void getDriveFolderName(folderUrl, controller.signal)
@@ -159,7 +184,7 @@ function App() {
       .catch(() => {})
 
     return () => controller.abort()
-  }, [folderUrl])
+  }, [folderName, folderUrl, sidebarExpanded])
 
   const selectedFile = useMemo(
     () => job.files.find((file) => file.key === selectedKey) ?? null,
@@ -196,12 +221,6 @@ function App() {
     setDownloadAllState({ status: 'loading', completed: 0, total })
 
     try {
-      const folderNameRequest =
-        folderName || !folderUrl
-          ? Promise.resolve(folderName)
-          : getDriveFolderName(folderUrl, controller.signal)
-              .then((folder) => folder.name)
-              .catch(() => null)
       const transcripts: Array<{ sourceName: string; content: string }> = []
       let nextIndex = 0
       let completed = 0
@@ -236,9 +255,6 @@ function App() {
         }),
       )
 
-      const resolvedFolderName = await folderNameRequest
-      if (resolvedFolderName) setFolderName(resolvedFolderName)
-
       const usedNames = new Set<string>()
       const archive = await createTranscriptArchive(
         transcripts.map((transcript) => ({
@@ -267,7 +283,7 @@ function App() {
         downloadController.current = null
       }
     }
-  }, [downloadableFiles, folderName, folderUrl])
+  }, [downloadableFiles])
 
   const selectFile = useCallback(
     (file: ExplorerFile) => {
@@ -399,8 +415,31 @@ function App() {
     setDriveUrl('')
   }, [job])
 
+  const openSidebar = useCallback(() => {
+    clearOpenJobError()
+    setSidebarExpanded(true)
+  }, [clearOpenJobError])
+
+  const closeSidebar = useCallback(() => {
+    clearOpenJobError()
+    setSidebarExpanded(false)
+  }, [clearOpenJobError])
+
+  const openHistoryJob = useCallback(
+    async (historyJob: BackendJobSummary) => {
+      if (historyJob.job_id === job.jobId) {
+        return
+      }
+
+      await job.openJob(historyJob.job_id)
+    },
+    [job.jobId, job.openJob],
+  )
+
+  let view
+
   if (job.phase === 'initial') {
-    return (
+    view = (
       <StartView
         value={driveUrl}
         isSubmitting={job.isSubmitting}
@@ -412,12 +451,11 @@ function App() {
         onSubmit={(value) => void job.start(value)}
       />
     )
-  }
-
-  if (job.phase === 'processing' || job.phase === 'failed') {
-    return (
+  } else if (job.phase === 'processing' || job.phase === 'failed') {
+    view = (
       <ProcessingView
         status={job.status}
+        submitError={job.submitError}
         pollError={job.pollError}
         recoveryNotice={job.recoveryNotice}
         isFailed={job.phase === 'failed'}
@@ -425,116 +463,141 @@ function App() {
         isLoadingFiles={job.isLoadingFiles}
         isCancelling={job.isCancelling}
         cancelError={job.cancelError}
+        canRetryJob={job.canRetryJob}
         onRetryStatus={job.retryStatus}
         onRetryJob={job.retryJob}
         onCancel={() => void job.cancel()}
         onChangeFolder={resetApp}
       />
     )
-  }
-
-  const readyCount = job.files.filter((file) => file.status === 'ready').length
-  const hasPartialFailures = job.files.some((file) => file.status === 'failed')
-  const downloadAllLabel =
-    downloadAllState.status === 'loading'
-      ? `preparing ${downloadAllState.completed}/${downloadAllState.total}`
-      : downloadAllState.status === 'success'
-        ? 'downloaded'
+  } else {
+    const readyCount = job.files.filter((file) => file.status === 'ready').length
+    const hasPartialFailures = job.files.some((file) => file.status === 'failed')
+    const downloadAllLabel =
+      downloadAllState.status === 'loading'
+        ? `Preparing ${downloadAllState.completed}/${downloadAllState.total}`
+        : downloadAllState.status === 'success'
+          ? 'Downloaded'
+          : downloadAllState.status === 'error'
+            ? 'Try Again'
+            : 'Download All'
+    const downloadAllMessage =
+      downloadAllState.status === 'success'
+        ? `${downloadAllState.total} Transcripts Downloaded`
         : downloadAllState.status === 'error'
-          ? 'try again'
-          : 'download all'
-  const downloadAllMessage =
-    downloadAllState.status === 'success'
-      ? `${downloadAllState.total} transcripts downloaded`
-      : downloadAllState.status === 'error'
-        ? downloadAllState.message
-        : ''
+          ? downloadAllState.message
+          : ''
 
-  return (
-    <main className="results-page">
-      <header className="results-header">
-        <Brand />
-        <div
-          className="results-header__status"
-          data-warning={hasPartialFailures || undefined}
-          title={job.status.error ? jobErrorMessage(job.status.error) : undefined}
-        >
-          {hasPartialFailures ? (
-            <CircleAlert aria-hidden="true" />
-          ) : (
-            <CircleCheck aria-hidden="true" />
-          )}
-          <span>transcripts ready</span>
-          <small>{hasPartialFailures ? 'some files need attention' : `${readyCount} files`}</small>
-        </div>
-        <div className="results-header__actions">
-          <button
-            className="download-all-button"
-            type="button"
-            onClick={() => void downloadAll()}
-            disabled={
-              downloadAllState.status === 'loading' ||
-              downloadableFiles.length === 0
-            }
-            data-state={
-              downloadAllState.status === 'idle'
-                ? undefined
-                : downloadAllState.status
-            }
-            aria-label={`Download all ${downloadableFiles.length} SRT transcripts as TXT files`}
-            title={
-              downloadAllState.status === 'error'
-                ? downloadAllState.message
-                : `Download ${downloadableFiles.length} transcripts as TXT files`
-            }
+    view = (
+      <main className="results-page">
+        <header className="results-header">
+          <div
+            className="results-header__status"
+            data-warning={hasPartialFailures || undefined}
+            title={job.status.error ? jobErrorMessage(job.status.error) : undefined}
           >
-            {downloadAllState.status === 'loading' ? (
-              <LoaderCircle className="spin" aria-hidden="true" />
-            ) : downloadAllState.status === 'success' ? (
-              <CircleCheck aria-hidden="true" />
-            ) : downloadAllState.status === 'error' ? (
+            {hasPartialFailures ? (
               <CircleAlert aria-hidden="true" />
             ) : (
-              <Download aria-hidden="true" />
+              <CircleCheck aria-hidden="true" />
             )}
-            <span>{downloadAllLabel}</span>
-          </button>
-          <button
-            className="new-folder-button"
-            type="button"
-            onClick={resetApp}
-            aria-label="Process another folder"
-          >
-            <FolderInput aria-hidden="true" />
-            <span>new folder</span>
-          </button>
-          <span className="visually-hidden" role="status" aria-live="polite">
-            {downloadAllMessage}
-          </span>
-        </div>
-      </header>
+            <span>Transcripts Ready</span>
+            <small>
+              {hasPartialFailures
+                ? 'Some Files Need Attention'
+                : `${readyCount} ${readyCount === 1 ? 'File' : 'Files'}`}
+            </small>
+          </div>
+          <div className="results-header__actions">
+            <button
+              className="download-all-button"
+              type="button"
+              onClick={() => void downloadAll()}
+              disabled={
+                downloadAllState.status === 'loading' ||
+                downloadableFiles.length === 0
+              }
+              data-state={
+                downloadAllState.status === 'idle'
+                  ? undefined
+                  : downloadAllState.status
+              }
+              aria-label={`Download all ${downloadableFiles.length} SRT transcripts as TXT files`}
+              title={
+                downloadAllState.status === 'error'
+                  ? downloadAllState.message
+                  : `Download ${downloadableFiles.length} transcripts as TXT files`
+              }
+            >
+              {downloadAllState.status === 'loading' ? (
+                <LoaderCircle className="spin" aria-hidden="true" />
+              ) : downloadAllState.status === 'success' ? (
+                <CircleCheck aria-hidden="true" />
+              ) : downloadAllState.status === 'error' ? (
+                <CircleAlert aria-hidden="true" />
+              ) : (
+                <Download aria-hidden="true" />
+              )}
+              <span>{downloadAllLabel}</span>
+            </button>
+            <button
+              className="new-folder-button"
+              type="button"
+              onClick={resetApp}
+              aria-label="Process another folder"
+            >
+              <FolderInput aria-hidden="true" />
+              <span>New Folder</span>
+            </button>
+            <span className="visually-hidden" role="status" aria-live="polite">
+              {downloadAllMessage}
+            </span>
+          </div>
+        </header>
 
-      <div className="workspace-wrap">
-        <div className="workspace" data-mobile-viewer={mobileViewerOpen || undefined}>
-          <FileExplorer
-            files={job.files}
-            selectedKey={selectedKey}
-            isLoading={job.isLoadingFiles}
-            error={job.filesError}
-            onSelect={selectFile}
-            onOpen={(file) => void openFile(file)}
-            onRetry={() => void job.retryFiles()}
-          />
-          <FileViewer
-            selectedFile={selectedFile}
-            openedFile={openedFile}
-            viewerState={viewerState}
-            onRetry={retryFile}
-            onClose={closeFile}
-          />
+        <div className="workspace-wrap">
+          <div className="workspace" data-mobile-viewer={mobileViewerOpen || undefined}>
+            <FileExplorer
+              files={job.files}
+              selectedKey={selectedKey}
+              isLoading={job.isLoadingFiles}
+              error={job.filesError}
+              onSelect={selectFile}
+              onOpen={(file) => void openFile(file)}
+              onRetry={() => void job.retryFiles()}
+            />
+            <FileViewer
+              selectedFile={selectedFile}
+              openedFile={openedFile}
+              viewerState={viewerState}
+              onRetry={retryFile}
+              onClose={closeFile}
+            />
+          </div>
         </div>
-      </div>
-    </main>
+      </main>
+    )
+  }
+
+  return (
+    <div
+      className="app-shell"
+      data-sidebar-expanded={sidebarExpanded || undefined}
+    >
+      <AppSidebar
+        expanded={sidebarExpanded}
+        currentJob={currentJob}
+        currentFolderName={folderName}
+        navigationLocked={navigationLocked}
+        selectedJobId={job.openingJobId}
+        selectionError={job.openJobError}
+        onOpen={openSidebar}
+        onClose={closeSidebar}
+        onNewFolder={resetApp}
+        onSelect={(historyJob) => void openHistoryJob(historyJob)}
+      />
+      <div className="app-shell__content">{view}</div>
+    </div>
   )
 }
 

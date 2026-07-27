@@ -21,9 +21,9 @@ interface FileViewerProps {
 }
 
 function viewerType(type: ExplorerFile['type']) {
-  if (type === 'srt') return 'SRT subtitle'
-  if (type === 'combined') return 'combined text'
-  return 'plain text'
+  if (type === 'srt') return 'SRT Subtitle'
+  if (type === 'combined') return 'Combined Text'
+  return 'Plain Text'
 }
 
 export function FileViewer({
@@ -108,7 +108,7 @@ export function FileViewer({
             <span className="viewer-prompt__icon" aria-hidden="true">
               <FolderOpen />
             </span>
-            <h2>Choose a transcript</h2>
+            <h2>Choose a Transcript</h2>
             <p>Click a file to view its transcript.</p>
           </div>
         )}
@@ -158,7 +158,7 @@ export function FileViewer({
                       ? 'Copy failed. Try again'
                       : 'Copy transcript'
                 }
-                title={copyState === 'failed' ? 'copy failed' : undefined}
+                title={copyState === 'failed' ? 'Copy Failed' : undefined}
               >
                 {copyState === 'copied' ? (
                   <Check aria-hidden="true" />
@@ -169,10 +169,10 @@ export function FileViewer({
                 )}
                 <span>
                   {copyState === 'copied'
-                    ? 'copied'
+                    ? 'Copied'
                     : copyState === 'failed'
-                      ? 'copy failed'
-                      : 'copy'}
+                      ? 'Copy Failed'
+                      : 'Copy'}
                 </span>
               </button>
               <button
@@ -182,7 +182,7 @@ export function FileViewer({
                 aria-label="Download transcript"
               >
                 <Download aria-hidden="true" />
-                <span>download</span>
+                <span>Download</span>
               </button>
             </>
           )}
@@ -206,8 +206,8 @@ export function FileViewer({
           )}
           <span>
             {copyState === 'copied'
-              ? 'copied to clipboard'
-              : 'copy failed, try again'}
+              ? 'Copied to Clipboard'
+              : 'Copy Failed, Try Again'}
           </span>
         </div>
       )}
@@ -216,7 +216,7 @@ export function FileViewer({
         {openedFile.status === 'failed' && (
           <div className="viewer-error" role="alert">
             <CircleAlert aria-hidden="true" />
-            <h3>Transcript unavailable</h3>
+            <h3>Transcript Unavailable</h3>
             <p>
               {openedFile.error ??
                 'This source could not be transcribed. Check the original media and try a new folder.'}
@@ -238,11 +238,11 @@ export function FileViewer({
         {openedFile.status === 'ready' && viewerState.status === 'error' && (
           <div className="viewer-error" role="alert">
             <CircleAlert aria-hidden="true" />
-            <h3>File did not load</h3>
+            <h3>File Did Not Load</h3>
             <p>{viewerState.message}</p>
             <button type="button" onClick={onRetry}>
               <RotateCw aria-hidden="true" />
-              try again
+              Try Again
             </button>
           </div>
         )}
