@@ -121,6 +121,7 @@ The backend gateway acts as a security firewall and protocol translator. Request
 | `status` | `GET` | `/status` | Get status of currently active job or idle state | None |
 | `jobs` | `GET` | `/jobs` | List historical jobs | None |
 | `job` | `GET` | `/jobs/{job_id}` | Fetch detailed status & files for a specific job | `job_id` (32-hex string) |
+| `retry` | `POST` | `/jobs/{job_id}/retry` | Start a new job from a terminal job's stored folder | `job_id` (32-hex string) |
 | `cancel` | `POST` | `/jobs/{job_id}/cancel` | Cancel an active transcription job | `job_id` (32-hex string) |
 | `files` | `GET` | `/files` | List generated output files | None |
 | `file` | `GET` | `/files/{file_id}` | Fetch SRT and plain text contents for a file | `file_id` (max 512 chars) |
@@ -148,53 +149,68 @@ The backend gateway acts as a security firewall and protocol translator. Request
 
 ## Production Inspection
 
-### Direct Backend Access (Mandatory)
+### Public Direct Backend Diagnostics (Mandatory)
 
-Always query the upstream server IP directly (`https://2.24.138.173`) for backend status, health, and diagnostics. **Do NOT access through Vercel or use Vercel proxy endpoints (`drive-transcribe.vercel.app`) when checking backend server state.**
+Always inspect the upstream server directly at `https://2.24.138.173`. **Do not use the Vercel proxy (`drive-transcribe.vercel.app`) to diagnose backend state.**
 
-Backend base URL: `https://2.24.138.173`
+The following read-only endpoints are intentionally public and require no API key, Hostinger login, or browser session:
 
-- `GET /health` is available directly without authentication.
-- All operational endpoints (`/status`, `/jobs`, `/jobs/{job_id}`) require the API key passed directly in the `X-API-Key` header to the server IP.
-- Load `TRANSCRIBER_API_KEY` into the local shell environment before executing direct commands.
+| Endpoint | Purpose |
+| :--- | :--- |
+| `GET /health` | Service readiness, disk capacity, worker limits, and active Drive timeout settings |
+| `GET /status` | Current active job, or idle state |
+| `GET /jobs` | Recent job history and job IDs |
+| `GET /jobs/{job_id}` | Per-file status, size, download progress, timing, and sanitized errors |
+| `GET /diagnostics/latest` | Sanitized summary of the most recent job |
 
-PowerShell example (Direct IP Access):
+The raw-IP TLS certificate requires curl's `-k` option. Use `curl.exe` instead of PowerShell's `curl` alias on Windows:
 
 ```powershell
 $upstream = "https://2.24.138.173"
-# Direct Health Check
 curl.exe -fsS -k "$upstream/health"
-
-# Direct Job Status Telemetry
-curl.exe -fsS -k -H "X-API-Key: $env:TRANSCRIBER_API_KEY" "$upstream/status"
-
-# Direct Job History
-curl.exe -fsS -k -H "X-API-Key: $env:TRANSCRIBER_API_KEY" "$upstream/jobs"
-
-# Direct Specific Job Query
-curl.exe -fsS -k -H "X-API-Key: $env:TRANSCRIBER_API_KEY" "$upstream/jobs/<job_id>"
+curl.exe -fsS -k "$upstream/status"
+curl.exe -fsS -k "$upstream/jobs"
+curl.exe -fsS -k "$upstream/jobs/<job_id>"
+curl.exe -fsS -k "$upstream/diagnostics/latest"
 ```
 
-Use the native paths listed in the Operation Endpoint Matrix. Never use Vercel proxy endpoints for diagnostic server checks.
+Do not load, request, or transmit `TRANSCRIBER_API_KEY` for these checks. A `401` from any endpoint above is a server regression.
+
+### Protected API Boundary
+
+Authentication remains required for state-changing operations and transcript contents, including `/process`, `/jobs/{job_id}/retry`, `/jobs/{job_id}/cancel`, `/files`, `/files/{file_id}`, and `/combined`. A `401` from those endpoints without an API key is expected. Do not weaken this boundary when changing diagnostics.
 
 ### Inspection Workflow
 
-1. Open `health` and verify HTTP `200`, `ok: true`, and `accepting_jobs: true`.
-2. Open `status` to inspect active job state, progress, and file list.
-3. Open `jobs` to inspect recent job history and retrieve specific `job_id` values.
-4. Open the job-specific URL to inspect per-file statuses, progress, and sanitized errors.
-5. Use browser Developer Tools Network tab (filtered for `transcriber`) to verify response status codes and headers.
+1. Query `/health`; require HTTP `200`, `ok: true`, and `accepting_jobs: true`. Check disk space, the 90% resource ceiling, worker counts, and Drive timeout settings.
+2. Query `/status` to identify the active job. If idle, use `/jobs` to locate the relevant historical job ID.
+3. Query `/jobs/{job_id}` and inspect each file's status, byte counts, elapsed time, speed, and error.
+4. Compare at least two snapshots 30–60 seconds apart before declaring a job stalled.
+5. Query `/diagnostics/latest` for a concise, sanitized summary suitable for reports or handoff to another agent.
+6. Use browser Developer Tools only when investigating frontend polling or rendering; filter Network requests for `transcriber`.
 
 ### Operational Interpretation
 
-- `downloading: 1%` is a stage marker indicating file download initiation. Large files may remain at `1%` until download completes.
+- `0 B · elapsed` starts when a file enters the download stage, so it includes connection setup and retries; it does not mean bytes are being transferred.
+- A healthy active download should show increasing `downloaded_bytes` across snapshots. Repeatedly unchanged bytes indicate a Drive request or retry problem.
 - `waiting_resources` indicates resource throttle queues on the upstream service; processing resumes automatically when workers free up.
-- Compare multiple status snapshots over time (`updated_at` timestamps) before classifying a job as stuck.
-- HTTP `401` indicates invalid proxy configuration or API key. `409` indicates an active concurrent job or unready result. `422` indicates invalid input parameters. `507` indicates insufficient upstream disk storage.
+- `abandoned` means the service stopped while the job was active; the folder must be submitted again.
+- `409` means another job is active or a result is not ready. `422` indicates invalid input. `507` indicates insufficient disk capacity.
 
-### Runtime Logging
+### Google Drive Download Strategy
 
-- Raw backend microservice logs are not publicly exposed.
+- Production uses `GOOGLE_DRIVE_BACKEND=hybrid` and `MAX_DOWNLOAD_WORKERS=1`.
+- The service uses a 90% application ceiling, 360% CPU quota on four cores, 85% memory throttling, and a 90% hard memory limit.
+- The authenticated Drive API lists folder contents and provides file size and MD5 metadata.
+- Each file uses gdown 6.1 with resume first. After two failed or stalled attempts, the existing authenticated API downloader resumes the same file.
+- A gdown attempt is stopped after 60 seconds without byte progress. Cancellation and disk reserve failures do not trigger fallback.
+- Per-file diagnostics expose `download_backend` and `download_fallback_reason`. Transcript quality and output generation are unchanged.
+- Roll back by restoring `/etc/drive-transcriber.env.before-hybrid-gdown-20260727` and `/opt/drive-transcriber/app.py.before-hybrid-gdown-20260727`, then restarting `drive-transcriber.service`.
+
+### Runtime Logs and Privacy
+
+- Public diagnostics expose filenames and operational progress, but redact Drive folder URLs, transcript contents, and secrets.
+- Raw backend and kernel logs are not public. If public diagnostics are insufficient, an authorized Hostinger operator must inspect `journalctl` for the `drive-transcriber.service`.
 - Proxy runtime logs require logging into an authorized Vercel account with access to the `drive-transcribe` project at `https://vercel.com/galalqassas2-8358s-projects/drive-transcribe/logs`.
 - Never expose `TRANSCRIBER_API_KEY`, Drive URLs, or transcript text contents in external bug reports.
 
