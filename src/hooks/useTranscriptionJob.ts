@@ -5,6 +5,7 @@ import {
   getJob,
   getStatus,
   listFiles,
+  retryJob as retryBackendJob,
   startJob,
 } from '../lib/transcriberApi'
 import { fileErrorMessage } from '../lib/transcriptionMessages'
@@ -16,7 +17,9 @@ import type {
   JobPhase,
 } from '../types'
 
-const pollInterval = 2500
+const activePollInterval = 2500
+const passivePollInterval = 5000
+const hiddenPollInterval = 15_000
 const maxPollInterval = 30_000
 
 const initialStatus: BackendStatusResponse = {
@@ -54,6 +57,22 @@ function isTerminal(status: BackendStatusResponse['status']) {
     status === 'cancelled' ||
     status === 'abandoned'
   )
+}
+
+function pollInterval(status: BackendStatusResponse) {
+  if (document.visibilityState === 'hidden') return hiddenPollInterval
+  if (
+    status.phase === 'queued' ||
+    status.phase === 'listing' ||
+    status.phase === 'waiting_resources'
+  ) {
+    return passivePollInterval
+  }
+  return activePollInterval
+}
+
+function jitter(delay: number) {
+  return delay + Math.floor(Math.random() * Math.min(500, delay * 0.1))
 }
 
 function fileStem(name: string) {
@@ -172,17 +191,19 @@ export function useTranscriptionJob(onNewJob: () => void) {
   const [isLoadingFiles, setIsLoadingFiles] = useState(false)
   const [isPolling, setIsPolling] = useState(false)
   const [isCancelling, setIsCancelling] = useState(false)
+  const [openingJobId, setOpeningJobId] = useState<string | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [pollError, setPollError] = useState<string | null>(null)
   const [filesError, setFilesError] = useState<string | null>(null)
   const [cancelError, setCancelError] = useState<string | null>(null)
   const [recoveryNotice, setRecoveryNotice] = useState<string | null>(null)
+  const [openJobError, setOpenJobError] = useState<string | null>(null)
   const [pollRun, setPollRun] = useState(0)
-  const [lastUrl, setLastUrl] = useState('')
   const submitLock = useRef(false)
   const submitController = useRef<AbortController | null>(null)
   const filesController = useRef<AbortController | null>(null)
   const cancelController = useRef<AbortController | null>(null)
+  const openJobController = useRef<AbortController | null>(null)
   const statusRef = useRef<BackendStatusResponse>(initialStatus)
   const jobIdRef = useRef<string | null>(null)
 
@@ -190,6 +211,35 @@ export function useTranscriptionJob(onNewJob: () => void) {
     statusRef.current = nextStatus
     setStatus(nextStatus)
   }, [])
+
+  const beginJob = useCallback(
+    (nextJobId: string, folderUrl: string | null) => {
+      const now = Date.now() / 1000
+      const startedStatus: BackendStatusResponse = {
+        job_id: nextJobId,
+        folder_url: folderUrl,
+        status: 'active',
+        phase: 'queued',
+        progress: 0,
+        current_file: null,
+        error: null,
+        cancel_requested: false,
+        created_at: now,
+        updated_at: now,
+        started_at: null,
+        finished_at: null,
+        files: [],
+      }
+
+      jobIdRef.current = nextJobId
+      setJobId(nextJobId)
+      updateStatus(startedStatus)
+      setPhase('processing')
+      setIsPolling(true)
+      setPollRun((run) => run + 1)
+    },
+    [updateStatus],
+  )
 
   const loadFiles = useCallback(async () => {
     filesController.current?.abort()
@@ -230,16 +280,24 @@ export function useTranscriptionJob(onNewJob: () => void) {
   useEffect(() => {
     if (phase !== 'processing' || !isPolling || !jobId) return
 
+    const currentJobId = jobId
     let active = true
     let timer: number | undefined
     let pollController: AbortController | null = null
     let failures = 0
+    let inFlight = false
 
-    const poll = async () => {
+    function schedule(delay: number) {
+      timer = window.setTimeout(() => void poll(), jitter(delay))
+    }
+
+    async function poll() {
+      if (!active || inFlight) return
+      inFlight = true
       pollController = new AbortController()
 
       try {
-        const response = await getJob(jobId, pollController.signal)
+        const response = await getJob(currentJobId, pollController.signal)
         if (!active) return
 
         updateStatus(response)
@@ -256,27 +314,41 @@ export function useTranscriptionJob(onNewJob: () => void) {
           return
         }
 
-        timer = window.setTimeout(poll, pollInterval)
+        schedule(pollInterval(response))
       } catch (error) {
         if (!active || isAbortError(error)) return
         const isTransient = isTransientPollError(error)
 
         if (isTransient) {
           failures += 1
-          const delay = Math.min(pollInterval * 2 ** failures, maxPollInterval)
-          timer = window.setTimeout(poll, delay)
+          const delay = Math.min(
+            pollInterval(statusRef.current) * 2 ** failures,
+            maxPollInterval,
+          )
+          schedule(delay)
           return
         }
 
         setPollError(apiErrorMessage(error, 'poll'))
         setIsPolling(false)
+      } finally {
+        inFlight = false
       }
     }
 
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden' || inFlight) return
+      if (timer !== undefined) window.clearTimeout(timer)
+      timer = undefined
+      void poll()
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
     void poll()
 
     return () => {
       active = false
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
       if (timer !== undefined) window.clearTimeout(timer)
       pollController?.abort()
     }
@@ -287,6 +359,7 @@ export function useTranscriptionJob(onNewJob: () => void) {
       submitController.current?.abort()
       filesController.current?.abort()
       cancelController.current?.abort()
+      openJobController.current?.abort()
     },
     [],
   )
@@ -306,34 +379,11 @@ export function useTranscriptionJob(onNewJob: () => void) {
       setCancelError(null)
       setRecoveryNotice(null)
       setFiles([])
-      setLastUrl(driveUrl)
       onNewJob()
 
       try {
         const response = await startJob(driveUrl, controller.signal)
-        const now = Date.now() / 1000
-        const startedStatus: BackendStatusResponse = {
-          job_id: response.job_id,
-          folder_url: driveUrl,
-          status: 'active',
-          phase: 'queued',
-          progress: 0,
-          current_file: null,
-          error: null,
-          cancel_requested: false,
-          created_at: now,
-          updated_at: now,
-          started_at: null,
-          finished_at: null,
-          files: [],
-        }
-
-        jobIdRef.current = response.job_id
-        setJobId(response.job_id)
-        updateStatus(startedStatus)
-        setPhase('processing')
-        setIsPolling(true)
-        setPollRun((run) => run + 1)
+        beginJob(response.job_id, driveUrl)
       } catch (error) {
         if (isAbortError(error)) return
 
@@ -378,7 +428,7 @@ export function useTranscriptionJob(onNewJob: () => void) {
         }
       }
     },
-    [loadFiles, onNewJob, updateStatus],
+    [beginJob, loadFiles, onNewJob, updateStatus],
   )
 
   const retryStatus = useCallback(() => {
@@ -387,9 +437,37 @@ export function useTranscriptionJob(onNewJob: () => void) {
     setPollRun((run) => run + 1)
   }, [])
 
-  const retryJob = useCallback(() => {
-    if (lastUrl) void start(lastUrl)
-  }, [lastUrl, start])
+  const retryJob = useCallback(async () => {
+    const current = statusRef.current
+    if (!hasJobId(current) || submitLock.current) return
+
+    submitLock.current = true
+    submitController.current?.abort()
+    const controller = new AbortController()
+    submitController.current = controller
+    setIsSubmitting(true)
+    setSubmitError(null)
+
+    try {
+      const response = await retryBackendJob(current.job_id, controller.signal)
+      onNewJob()
+      setFiles([])
+      setPollError(null)
+      setFilesError(null)
+      setCancelError(null)
+      setRecoveryNotice(null)
+      beginJob(response.job_id, null)
+    } catch (error) {
+      if (!isAbortError(error)) {
+        setSubmitError(apiErrorMessage(error, 'start'))
+      }
+    } finally {
+      if (submitController.current === controller) {
+        setIsSubmitting(false)
+        submitLock.current = false
+      }
+    }
+  }, [beginJob, onNewJob])
 
   const cancel = useCallback(async () => {
     const currentJobId = jobIdRef.current
@@ -429,10 +507,68 @@ export function useTranscriptionJob(onNewJob: () => void) {
     setSubmitError(null)
   }, [])
 
+  const openJob = useCallback(
+    async (nextJobId: string) => {
+      if (openJobController.current) return false
+
+      const controller = new AbortController()
+      openJobController.current = controller
+      setOpeningJobId(nextJobId)
+      setOpenJobError(null)
+
+      try {
+        const response = await getJob(nextJobId, controller.signal)
+        onNewJob()
+        jobIdRef.current = response.job_id
+        setJobId(response.job_id)
+        updateStatus(response)
+        setFilesError(null)
+        setCancelError(null)
+        setPollError(null)
+        setSubmitError(null)
+        setRecoveryNotice(null)
+        if (response.status === 'completed') {
+          setFiles(createExplorerFiles(response.files, response.status))
+          setIsLoadingFiles(false)
+          setIsPolling(false)
+          setPhase('results')
+        } else if (isTerminal(response.status)) {
+          setFiles([])
+          setIsPolling(false)
+          setPhase('failed')
+        } else {
+          setFiles([])
+          setPhase('processing')
+          setIsPolling(true)
+          setPollRun((run) => run + 1)
+        }
+
+        return true
+      } catch (error) {
+        if (!isAbortError(error)) {
+          setOpenJobError(apiErrorMessage(error, 'poll'))
+        }
+        return false
+      } finally {
+        if (openJobController.current === controller) {
+          openJobController.current = null
+          setOpeningJobId(null)
+        }
+      }
+    },
+    [onNewJob, updateStatus],
+  )
+
+  const clearOpenJobError = useCallback(() => {
+    setOpenJobError(null)
+  }, [])
+
   const reset = useCallback(() => {
     submitController.current?.abort()
     filesController.current?.abort()
     cancelController.current?.abort()
+    openJobController.current?.abort()
+    openJobController.current = null
     cancelController.current = null
     submitLock.current = false
     jobIdRef.current = null
@@ -445,12 +581,13 @@ export function useTranscriptionJob(onNewJob: () => void) {
     setIsLoadingFiles(false)
     setIsPolling(false)
     setIsCancelling(false)
+    setOpeningJobId(null)
     setSubmitError(null)
     setPollError(null)
     setFilesError(null)
     setCancelError(null)
     setRecoveryNotice(null)
-    setLastUrl('')
+    setOpenJobError(null)
     onNewJob()
   }, [onNewJob])
 
@@ -467,12 +604,17 @@ export function useTranscriptionJob(onNewJob: () => void) {
     filesError,
     cancelError,
     recoveryNotice,
+    openingJobId,
+    openJobError,
     start,
     retryStatus,
     retryJob,
+    canRetryJob: hasJobId(status) && isTerminal(status.status),
     cancel,
     retryFiles: loadFiles,
     clearSubmitError,
+    clearOpenJobError,
+    openJob,
     reset,
   }
 }
