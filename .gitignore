@@ -7,3 +7,9 @@ dist
 !.env.example
 *.local
 *.log
+
+# cypress runtime artifacts
+cypress/screenshots
+cypress/videos
+cypress/downloads
+.cypress-cache
