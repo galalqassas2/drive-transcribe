@@ -25,6 +25,7 @@ type Operation =
   | 'status'
   | 'jobs'
   | 'job'
+  | 'retry'
   | 'cancel'
   | 'files'
   | 'file'
@@ -223,6 +224,7 @@ function parseHealth(value: unknown): HealthResponse {
     !isFiniteNumber(value.reserve_disk_gb) ||
     typeof value.accepting_jobs !== 'boolean' ||
     !isFiniteNumber(value.max_video_workers) ||
+    !isFiniteNumber(value.max_download_workers) ||
     !isFiniteNumber(value.resource_limit_percent)
   ) {
     return invalidResponse('The API returned invalid health information')
@@ -234,13 +236,27 @@ function parseHealth(value: unknown): HealthResponse {
     reserve_disk_gb: value.reserve_disk_gb,
     accepting_jobs: value.accepting_jobs,
     max_video_workers: value.max_video_workers,
+    max_download_workers: value.max_download_workers,
     resource_limit_percent: value.resource_limit_percent,
   }
 }
 
 function parseFile(value: unknown): BackendFile {
+  if (!isRecord(value)) {
+    return invalidResponse('The API returned invalid file metadata')
+  }
+
+  const downloadedBytes = Object.hasOwn(value, 'downloaded_bytes')
+    ? value.downloaded_bytes
+    : 0
+  const downloadStartedAt = Object.hasOwn(value, 'download_started_at')
+    ? value.download_started_at
+    : null
+  const downloadFinishedAt = Object.hasOwn(value, 'download_finished_at')
+    ? value.download_finished_at
+    : null
+
   if (
-    !isRecord(value) ||
     !Number.isInteger(value.file_index) ||
     !isFiniteNumber(value.file_index) ||
     typeof value.name !== 'string' ||
@@ -249,7 +265,11 @@ function parseFile(value: unknown): BackendFile {
     !fileStatuses.has(value.status as BackendFileStatus) ||
     !isFiniteNumber(value.progress) ||
     !isNullableString(value.error) ||
-    !isNullableNumber(value.expected_size)
+    !isNullableNumber(value.expected_size) ||
+    !isFiniteNumber(downloadedBytes) ||
+    downloadedBytes < 0 ||
+    !isNullableNumber(downloadStartedAt) ||
+    !isNullableNumber(downloadFinishedAt)
   ) {
     return invalidResponse('The API returned invalid file metadata')
   }
@@ -262,14 +282,21 @@ function parseFile(value: unknown): BackendFile {
     progress: value.progress,
     error: value.error,
     expected_size: value.expected_size,
+    downloaded_bytes: downloadedBytes,
+    download_started_at: downloadStartedAt,
+    download_finished_at: downloadFinishedAt,
   }
+}
+
+function isOptionalString(value: unknown): value is string | null | undefined {
+  return value === undefined || value === null || typeof value === 'string'
 }
 
 function parseJob(value: unknown): BackendJob {
   if (
     !isRecord(value) ||
     !isJobId(value.job_id) ||
-    typeof value.folder_url !== 'string' ||
+    !isOptionalString(value.folder_url) ||
     typeof value.status !== 'string' ||
     !jobStatuses.has(value.status as BackendJobStatus) ||
     typeof value.phase !== 'string' ||
@@ -289,7 +316,7 @@ function parseJob(value: unknown): BackendJob {
 
   return {
     job_id: value.job_id,
-    folder_url: value.folder_url,
+    folder_url: typeof value.folder_url === 'string' ? value.folder_url : null,
     status: value.status as BackendJobStatus,
     phase: value.phase as BackendJobPhase,
     progress: value.progress,
@@ -501,6 +528,16 @@ export function getJob(jobId: string, signal?: AbortSignal) {
   return jsonRequest('job', parseJob, {
     query: { job_id: jobId },
     signal,
+  })
+}
+
+export function retryJob(jobId: string, signal?: AbortSignal) {
+  requireJobId(jobId)
+  return jsonRequest('retry', parseProcess, {
+    method: 'POST',
+    query: { job_id: jobId },
+    signal,
+    timeoutMs: START_TIMEOUT_MS,
   })
 }
 

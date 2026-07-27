@@ -34,6 +34,7 @@ export interface HealthResponse {
   reserve_disk_gb: number
   accepting_jobs: boolean
   max_video_workers: number
+  max_download_workers: number
   resource_limit_percent: number
 }
 
@@ -45,11 +46,14 @@ export interface BackendFile {
   progress: number
   error: string | null
   expected_size: number | null
+  downloaded_bytes: number
+  download_started_at: number | null
+  download_finished_at: number | null
 }
 
 export interface BackendJob {
   job_id: string
-  folder_url: string
+  folder_url: string | null
   status: BackendJobStatus
   phase: BackendJobPhase
   progress: number

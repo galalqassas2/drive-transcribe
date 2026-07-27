@@ -4,6 +4,7 @@ type Operation =
   | 'status'
   | 'jobs'
   | 'job'
+  | 'retry'
   | 'cancel'
   | 'files'
   | 'file'
@@ -23,6 +24,7 @@ const operations = new Set<Operation>([
   'status',
   'jobs',
   'job',
+  'retry',
   'cancel',
   'files',
   'file',
@@ -36,6 +38,7 @@ const methods: Record<Operation, 'GET' | 'POST'> = {
   status: 'GET',
   jobs: 'GET',
   job: 'GET',
+  retry: 'POST',
   cancel: 'POST',
   files: 'GET',
   file: 'GET',
@@ -268,6 +271,11 @@ async function createUpstreamRequest(
       assertAllowedParameters(params, ['job_id'])
       const jobId = validateJobId(readParameter(params, 'job_id', true))
       return { method: 'GET', path: `/jobs/${jobId}`, accept: 'application/json' }
+    }
+    case 'retry': {
+      assertAllowedParameters(params, ['job_id'])
+      const jobId = validateJobId(readParameter(params, 'job_id', true))
+      return { method: 'POST', path: `/jobs/${jobId}/retry`, accept: 'application/json' }
     }
     case 'cancel': {
       assertAllowedParameters(params, ['job_id'])
