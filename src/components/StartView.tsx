@@ -1,6 +1,5 @@
 import { ArrowRight, CircleAlert, Link2, LoaderCircle } from 'lucide-react'
 import { useMemo, type FormEvent } from 'react'
-import { Brand } from './Brand'
 
 interface StartViewProps {
   value: string
@@ -47,18 +46,14 @@ export function StartView({
 
   return (
     <main className="start-page">
-      <header className="site-header">
-        <Brand />
-      </header>
-
       <section className="start-hero" aria-labelledby="start-title">
         <div className="start-hero__intro">
-          <h1 id="start-title">Transcribe a Drive folder</h1>
+          <h1 id="start-title">Transcribe a Drive Folder</h1>
           <p>Paste a public folder. Get subtitle and text files.</p>
         </div>
 
         <form className="start-form" onSubmit={submit} noValidate>
-          <label htmlFor="drive-folder">Google Drive folder link</label>
+          <label htmlFor="drive-folder">Google Drive Folder Link</label>
           <div className="start-form__row">
             <div className="input-shell" data-invalid={Boolean(fieldError) || undefined}>
               <Link2 aria-hidden="true" />
@@ -86,11 +81,11 @@ export function StartView({
               {isSubmitting ? (
                 <>
                   <LoaderCircle className="spin" aria-hidden="true" />
-                  starting
+                  Starting
                 </>
               ) : (
                 <>
-                  process
+                  Process
                   <ArrowRight aria-hidden="true" />
                 </>
               )}
@@ -110,7 +105,7 @@ export function StartView({
             <div className="inline-error" role="alert">
               <CircleAlert aria-hidden="true" />
               <div>
-                <strong>Could not start</strong>
+                <strong>Could Not Start</strong>
                 <p>{submitError}</p>
               </div>
             </div>

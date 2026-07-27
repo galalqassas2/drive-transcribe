@@ -24,8 +24,8 @@ function typeLabel(type: ExplorerFile['type']) {
 
 function fileDescription(file: ExplorerFile) {
   return file.key === 'combined:txt'
-    ? 'recommended for ChatGPT'
-    : `${typeLabel(file.type)} file`
+    ? 'Recommended for ChatGPT'
+    : `${typeLabel(file.type)} File`
 }
 
 export function FileExplorer({
@@ -71,8 +71,12 @@ export function FileExplorer({
           <Folder />
         </span>
         <div>
-          <h2>transcripts</h2>
-          <p>{isLoading ? 'loading files' : `${files.length} ${files.length === 1 ? 'file' : 'files'}`}</p>
+          <h2>Transcripts</h2>
+          <p>
+            {isLoading
+              ? 'Loading Files'
+              : `${files.length} ${files.length === 1 ? 'File' : 'Files'}`}
+          </p>
         </div>
       </div>
 
@@ -94,11 +98,11 @@ export function FileExplorer({
         {!isLoading && error && (
           <div className="explorer-state" role="alert">
             <CircleX aria-hidden="true" />
-            <h3>Files did not load</h3>
+            <h3>Files Did Not Load</h3>
             <p>{error}</p>
             <button type="button" onClick={onRetry}>
               <RotateCw aria-hidden="true" />
-              try again
+              Try Again
             </button>
           </div>
         )}
@@ -106,11 +110,11 @@ export function FileExplorer({
         {!isLoading && !error && files.length === 0 && (
           <div className="explorer-state">
             <Folder aria-hidden="true" />
-            <h3>No transcript files</h3>
+            <h3>No Transcript Files</h3>
             <p>Completed files will appear here.</p>
             <button type="button" onClick={onRetry}>
               <RotateCw aria-hidden="true" />
-              refresh
+              Refresh
             </button>
           </div>
         )}
@@ -156,7 +160,7 @@ export function FileExplorer({
                       ) : (
                         <CircleX aria-hidden="true" />
                       )}
-                      {file.status}
+                      {file.status === 'ready' ? 'Ready' : 'Failed'}
                     </span>
                   </button>
                 </li>
